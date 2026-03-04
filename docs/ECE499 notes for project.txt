@@ -1,0 +1,47 @@
+ECE499 notes for project:
+What KCF Actually Does
+KCF checks every single pixel shift — stride of 1. So for a 64×64 search patch, there are 64×64 = 4096 possible shifts to evaluate. At each shift (m, n), you're computing the similarity between the template and the search region shifted by (m, n) pixels. This gives you a dense response map where every pixel has a confidence value, so you get pixel-level precision in locating the target.
+With a naive approach, each of those 4096 comparisons involves summing over all pixels in the template (say 16×16 = 256 multiplies per comparison), so the total cost is 4096 × 256 ≈ 1 million multiply-accumulates.
+With the FFT trick, you compute the same result in O(N² log N) where N=64, which is roughly 64 × 64 × 6 ≈ 24,576 operations. That's about a 40× speedup. And this gap grows as the patch size increases.
+So to summarize: the 4096 is the number of pixel-level shift positions in the search region, not block-level positions. KCF's whole contribution is making it feasible to check all of them at once.
+
+
+
+
+Original x:          Circularly shifted by (1, 2):
+                     (1 row down, 2 columns right)
+
+A B C D              G H E F
+E F G H     →        K L I J
+I J K L              O P M N
+M N O P              C D A B
+
+KCF does not detect the target on its own. You manually provide the initial bounding box. This could come from:
+
+A human clicking and dragging a rectangle around the object
+
+It crops a larger patch around the bounding box center (say 64×64 around a 16×16 box). It then learns a filter that says "this specific pattern of pixel intensities is the target, and everything around it is background." The Gaussian label tells it "confidence should be highest at the center of this patch and fade outward."
+
+What Happens When It Fails
+Since KCF just follows a pixel pattern, it can fail when:
+
+The object changes appearance drastically (rotation, lighting change) — the learned pattern no longer matches
+The object moves too fast (jumps outside the 64×64 search region between frames) — KCF only looks where it last saw the target
+Occlusion — something covers the target and KCF starts learning the occluder instead
+Scale change — the object gets bigger/smaller and the fixed-size box no longer fits
+
+
+INPUT: Frame 1 + bounding box (from user or detector)
+
+LOOP for each new frame:
+  1. Crop 64×64 patch at last known center
+  2. Apply cosine window to the patch
+  3. FFT the patch → ẑ
+  4. Compute kernel correlation k^xz using FFTs
+  5. Multiply: f̂ = k̂^xz ⊙ α̂
+  6. IFFT → response map f(z)
+  7. Find peak → new target center
+  8. Update model (blend old and new template/α)
+  9. Draw bounding box at new center with original width/height
+
+OUTPUT: Bounding box position each frame
