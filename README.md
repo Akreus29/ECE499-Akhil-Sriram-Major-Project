@@ -22,15 +22,6 @@ This repository contains a comprehensive Register Transfer Level (RTL) design fo
 * Designed to handle high-bandwidth, continuous pixel data flow using AXI4-Stream
 * Capable of fixed-point arithmetic to optimize Look-Up Table (LUT) consumption
 * Written in synthesizable Verilog, targeted and validated on the Artix-7 (Nexys A7) FPGA
-
-## Repository Structure
-```text
-KCF-Visual-Tracker/
-├── src/                     # RTL source files (Verilog) for KCF IP and AXI wrappers
-├── tb/                      # Testbenches for IP blocks and AXI bus simulation
-├── data/                    # Memory initialization files (.mem) for test images
-├── docs/                    # Block diagrams, timing analysis, and synthesis reports
-└── README.md                # This file
 Installation
 Clone the repository:
 git clone [https://github.com/AkhilSriram/KCF-Visual-Tracker.git](https://github.com/AkhilSriram/KCF-Visual-Tracker.git)
@@ -61,3 +52,13 @@ Implementation Language	               Verilog
 
 License
 This project is licensed under Shiv Nadar University License as specified in the source files.
+## Repository Structure
+
+```text
+KCF-Visual-Tracker/
+├── src/                     # RTL source files (Verilog) for KCF IP and AXI wrappers
+├── tb/                      # Testbenches for IP blocks and AXI bus simulation
+├── data/                    # Memory initialization files (.mem) for test images
+├── docs/                    # Block diagrams, timing analysis, and synthesis reports
+└── README.md                # This file
+
