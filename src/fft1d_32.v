@@ -7,12 +7,12 @@
 module fft1d_32 #(
     parameter N          = 32,
     parameter DATA_WIDTH = 16,
-    parameter FRAC       = 8,
-    parameter SCALE_EN   = 1    // 1 = >>>1 per stage (forward FFT), 0 = no scaling (IFFT)
+    parameter FRAC       = 8
 )(
     input  wire                          clk,
     input  wire                          rst_n,
     input  wire                          start,
+    input  wire                          scale_en,   // 1 = >>>1 per stage, 0 = no scaling
     input  wire signed [DATA_WIDTH-1:0]  in_re [0:N-1],
     input  wire signed [DATA_WIDTH-1:0]  in_im [0:N-1],
     output reg  signed [DATA_WIDTH-1:0]  out_re [0:N-1],
@@ -87,7 +87,8 @@ module fft1d_32 #(
     wire signed [DATA_WIDTH-1:0] bf_out_re_a, bf_out_im_a;
     wire signed [DATA_WIDTH-1:0] bf_out_re_b, bf_out_im_b;
 
-    butterfly #(.DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC), .SCALE_EN(SCALE_EN)) u_bfly (
+    butterfly #(.DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) u_bfly (
+        .scale_en(scale_en),
         .in_re_a(buf_re[idx_a]), .in_im_a(buf_im[idx_a]),
         .in_re_b(buf_re[idx_b]), .in_im_b(buf_im[idx_b]),
         .w_re(w_re),             .w_im(w_im),

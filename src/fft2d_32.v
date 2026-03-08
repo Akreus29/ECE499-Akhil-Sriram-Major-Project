@@ -8,10 +8,11 @@
 // then pulse start. Read results via rd_addr after done.
 
 module fft2d_32 #(
-    parameter N          = 32,
-    parameter DATA_WIDTH = 16,
-    parameter FRAC       = 8,
-    parameter SCALE_EN   = 1
+    parameter N            = 32,
+    parameter DATA_WIDTH   = 16,
+    parameter FRAC         = 8,
+    parameter SCALE_EN_ROW = 1,   // scaling for row-pass 1D FFTs
+    parameter SCALE_EN_COL = 1    // scaling for column-pass 1D FFTs
 )(
     input  wire                           clk,
     input  wire                           rst_n,
@@ -57,10 +58,12 @@ module fft2d_32 #(
     wire signed [DATA_WIDTH-1:0] fft_out_im [0:N-1];
     reg  fft_start;
     wire fft_done;
+    reg  fft_scale_en;   // driven by FSM: SCALE_EN_ROW or SCALE_EN_COL
 
-    fft1d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC), .SCALE_EN(SCALE_EN)) u_fft1d (
+    fft1d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) u_fft1d (
         .clk(clk), .rst_n(rst_n),
         .start(fft_start),
+        .scale_en(fft_scale_en),
         .in_re(fft_in_re), .in_im(fft_in_im),
         .out_re(fft_out_re), .out_im(fft_out_im),
         .done(fft_done)
@@ -71,10 +74,11 @@ module fft2d_32 #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state     <= S_IDLE;
-            line_idx  <= 0;
-            fft_start <= 0;
-            done      <= 0;
+            state        <= S_IDLE;
+            line_idx     <= 0;
+            fft_start    <= 0;
+            fft_scale_en <= 1;
+            done         <= 0;
         end else begin
             fft_start <= 0;
             done      <= 0;
@@ -88,8 +92,9 @@ module fft2d_32 #(
                         buf_im[wr_addr] <= wr_data_im;
                     end
                     if (start) begin
-                        line_idx <= 0;
-                        state    <= S_ROW_LOAD;
+                        line_idx     <= 0;
+                        fft_scale_en <= SCALE_EN_ROW[0];
+                        state        <= S_ROW_LOAD;
                     end
                 end
 
@@ -119,8 +124,9 @@ module fft2d_32 #(
                     end
                     if (line_idx == N - 1) begin
                         // All rows done → start column pass
-                        line_idx <= 0;
-                        state    <= S_COL_LOAD;
+                        line_idx     <= 0;
+                        fft_scale_en <= SCALE_EN_COL[0];
+                        state        <= S_COL_LOAD;
                     end else begin
                         line_idx <= line_idx + 1;
                         state    <= S_ROW_LOAD;

@@ -91,7 +91,8 @@ module kcf_detect_top #(
     wire [$clog2(TOTAL)-1:0]        fft_rd_addr = cnt[9:0];
     wire signed [DATA_WIDTH-1:0]    fft_rd_re, fft_rd_im;
 
-    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC), .SCALE_EN(1)) u_fft (
+    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC),
+               .SCALE_EN_ROW(1), .SCALE_EN_COL(0)) u_fft (
         .clk(clk), .rst_n(rst_n),
         .wr_addr(fft_wr_addr), .wr_data_re(fft_wr_data_re),
         .wr_data_im(fft_wr_data_im), .wr_en(fft_wr_en),
@@ -108,9 +109,10 @@ module kcf_detect_top #(
     wire signed [DATA_WIDTH-1:0] cmul_b_im = fft_rd_im;
     wire signed [DATA_WIDTH-1:0] cmul_out_re, cmul_out_im;
 
+    // conj(alpha) * X_hat: alpha goes to b (conjugated), X_hat goes to a
     cconj_mul #(.DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) u_cconj (
-        .a_re(cmul_a_re), .a_im(cmul_a_im),
-        .b_re(cmul_b_re), .b_im(cmul_b_im),
+        .a_re(cmul_b_re), .a_im(cmul_b_im),   // X_hat (not conjugated)
+        .b_re(cmul_a_re), .b_im(cmul_a_im),   // alpha (conjugated by cconj_mul)
         .out_re(cmul_out_re), .out_im(cmul_out_im)
     );
 

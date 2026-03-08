@@ -53,7 +53,8 @@ module ifft2d_32 #(
     wire signed [DATA_WIDTH-1:0]  fft_rd_re;
     wire signed [DATA_WIDTH-1:0]  fft_rd_im;
 
-    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC), .SCALE_EN(1)) u_fft2d (
+    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC),
+               .SCALE_EN_ROW(1), .SCALE_EN_COL(1)) u_fft2d (
         .clk(clk), .rst_n(rst_n),
         .wr_addr(fft_wr_addr),
         .wr_data_re(fft_wr_data_re),

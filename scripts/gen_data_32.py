@@ -128,12 +128,28 @@ def gen_alpha(patch, hann):
     print(f'  Detection peak at row={peak[0]}, col={peak[1]}')
     print(f'  Expected: (0, 0) for self-detection with DFT-centred label\n')
 
+    # Pre-scale alpha by K to compensate for the forward FFT's 1/N scaling.
+    # Forward FFT uses SCALE_EN_ROW=1, SCALE_EN_COL=0 → total /N.
+    # IFFT uses SCALE_EN_ROW=1, SCALE_EN_COL=1 → correct 1/N^2.
+    # Pipeline output = (K / N) * response_python.
+    # K=16 gives output ≈ 0.071 → Q8.8 raw ≈ 18, enough to distinguish.
+    # max|alpha*16| ≈ 71.7, |product| ≤ 71.7 * 1.1 ≈ 79 < 128 → no cmul overflow.
+    K = 16
+    alpha_scaled = alpha_hat * K
+
+    print(f'  Alpha pre-scaling by K={K}:')
+    print(f'    max|alpha_hat| = {np.max(np.abs(alpha_hat)):.4f}')
+    print(f'    max|alpha_scaled| = {np.max(np.abs(alpha_scaled)):.4f}')
+    print(f'    Q8.8 signed max = {127.996:.3f}')
+    clip_count = np.sum(np.abs(alpha_scaled) > 127.996)
+    print(f'    Values that will clip: {clip_count} / {N*N}')
+
     # Write alpha_hat interleaved: re[0], im[0], re[1], im[1], ...
     values = []
     for r in range(N):
         for c in range(N):
-            values.append(float_to_q88(alpha_hat[r, c].real))
-            values.append(float_to_q88(alpha_hat[r, c].imag))
+            values.append(float_to_q88(alpha_scaled[r, c].real))
+            values.append(float_to_q88(alpha_scaled[r, c].imag))
     write_mem('alpha_hat.mem', values)
 
     return alpha_hat, peak
