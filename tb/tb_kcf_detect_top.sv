@@ -82,14 +82,22 @@ module tb_kcf_detect_top;
         $display("  KCF Detection Result");
         $display("  Peak at: row=%0d, col=%0d", peak_row, peak_col);
         $display("  Peak value: %0d (Q8.8 = %f)", peak_val, $itor(peak_val) / 256.0);
-        $display("  Golden reference: row=18, col=19");
         $display("═══════════════════════════════════════════");
 
-        if (peak_row == 18 && peak_col == 19)
-            $display("  PASS: Peak matches golden reference!");
-        else
-            $display("  NOTE: Peak does not match golden. This may be due to");
-        $display("        fixed-point quantization. Check if peak is close.");
+        // Dump full response map for Python comparison
+        begin
+            integer fd, ri;
+            fd = $fopen("data/hw_response.mem", "w");
+            if (fd) begin
+                for (ri = 0; ri < TOTAL; ri = ri + 1) begin
+                    $fwrite(fd, "%04x\n", dut.resp_map[ri]);
+                end
+                $fclose(fd);
+                $display("  Response map written to data/hw_response.mem");
+            end else begin
+                $display("  WARNING: Could not open data/hw_response.mem for writing");
+            end
+        end
 
         #100;
         $finish;

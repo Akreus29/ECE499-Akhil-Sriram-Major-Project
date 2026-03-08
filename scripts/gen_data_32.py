@@ -113,43 +113,45 @@ def gen_alpha(patch, hann):
 
     # Linear kernel: K_hat = conj(X_hat) * X_hat = |X_hat|^2 (real-valued)
     K_hat = np.conj(X_hat) * X_hat
-    lam = 1e-2 * SCALE  # lambda in Q8.8-ish scale (small regulariser)
-    # Actually lambda should be relative to K_hat magnitude
-    lam = 1e-4  # small relative to normalised values
+    lam = 1e-2  # regulariser
 
     alpha_hat = Y_hat / (K_hat + lam)
 
     # ── Golden reference: run detection on the same patch ──
-    # response = IFFT( conj(alpha_hat) * X_hat )
-    response = np.fft.ifft2(np.conj(alpha_hat) * X_hat).real
+    # Correct KCF: response = IFFT( conj(X_hat) * Z_hat * alpha_hat )
+    # For self-detection (Z = X): response = IFFT( |X_hat|^2 * alpha_hat )
+    response = np.fft.ifft2(K_hat * alpha_hat).real
     peak = np.unravel_index(np.argmax(response), (N, N))
     print(f'\n  GOLDEN REFERENCE:')
     print(f'  Training patch feature at (18, 20)')
     print(f'  Detection peak at row={peak[0]}, col={peak[1]}')
     print(f'  Expected: (0, 0) for self-detection with DFT-centred label\n')
 
-    # Pre-scale alpha by K to compensate for the forward FFT's 1/N scaling.
-    # Forward FFT uses SCALE_EN_ROW=1, SCALE_EN_COL=0 → total /N.
-    # IFFT uses SCALE_EN_ROW=1, SCALE_EN_COL=1 → correct 1/N^2.
-    # Pipeline output = (K / N) * response_python.
-    # K=16 gives output ≈ 0.071 → Q8.8 raw ≈ 18, enough to distinguish.
-    # max|alpha*16| ≈ 71.7, |product| ≤ 71.7 * 1.1 ≈ 79 < 128 → no cmul overflow.
-    K = 16
-    alpha_scaled = alpha_hat * K
+    # Combined filter for hardware: store conj(alpha_hat) * X_hat
+    # Hardware computes Z_hat * conj(stored) = Z_hat * alpha * conj(X) = correct KCF
+    # Pre-scale by K to compensate for forward FFT's 1/N scaling.
+    combined = np.conj(alpha_hat) * X_hat
+    max_combined = np.max(np.abs(combined))
 
-    print(f'  Alpha pre-scaling by K={K}:')
+    # Adaptive K: largest power-of-2 fitting in Q8.8
+    K = 1
+    while K * 2 * max_combined < 120.0:
+        K *= 2
+
+    combined_scaled = combined * K
+    print(f'  Combined filter (conj(alpha)*X) pre-scaling by K={K}:')
     print(f'    max|alpha_hat| = {np.max(np.abs(alpha_hat)):.4f}')
-    print(f'    max|alpha_scaled| = {np.max(np.abs(alpha_scaled)):.4f}')
-    print(f'    Q8.8 signed max = {127.996:.3f}')
-    clip_count = np.sum(np.abs(alpha_scaled) > 127.996)
+    print(f'    max|combined| = {max_combined:.4f}')
+    print(f'    max|combined*K| = {np.max(np.abs(combined_scaled)):.4f}')
+    clip_count = np.sum(np.abs(combined_scaled) > 127.996)
     print(f'    Values that will clip: {clip_count} / {N*N}')
 
-    # Write alpha_hat interleaved: re[0], im[0], re[1], im[1], ...
+    # Write combined filter interleaved: re[0], im[0], re[1], im[1], ...
     values = []
     for r in range(N):
         for c in range(N):
-            values.append(float_to_q88(alpha_scaled[r, c].real))
-            values.append(float_to_q88(alpha_scaled[r, c].imag))
+            values.append(float_to_q88(combined_scaled[r, c].real))
+            values.append(float_to_q88(combined_scaled[r, c].imag))
     write_mem('alpha_hat.mem', values)
 
     return alpha_hat, peak

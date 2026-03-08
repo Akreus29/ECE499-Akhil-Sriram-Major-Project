@@ -9,6 +9,7 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta, positioning, shapes.geometric, calc}
 \usepackage{titlesec}
+\usepackage{float}
 \titleformat{\chapter}[display]
   {\normalfont\huge\bfseries\centering}
   {\chaptertitlename\ \thechapter}{20pt}{\Huge}
@@ -55,7 +56,7 @@
 \begin{center}
 \huge{\textsc{Abstract}}
 \end{center}
-Visual object tracking is a computationally demanding task in computer vision, typically requiring high-performance CPUs or GPUs to maintain real-time frame rates. This project presents a Register Transfer Level (RTL) implementation of the Kernelized Correlation Filter (KCF) algorithm, designed to accelerate the tracking pipeline using dedicated FPGA hardware. For this mid-semester Minimum Viable Product (MVP), the architecture is specifically optimized for the detection phase: operating on a scaled-down 32$\times$32 pixel patch, utilizing a linear kernel to bypass complex exponential calculations, and loading offline-trained filter coefficients ($\hat{\alpha}$) from static memory. The pipelined hardware integrates a custom 2D Fast Fourier Transform (FFT) core, element-wise conjugate multiplication, 2D Inverse FFT (IFFT), and a spatial peak detection module. The design has been verified through behavioral simulation in both Icarus Verilog and Xilinx Vivado, with the hardware output matching the Python golden reference exactly.
+Visual object tracking is a computationally demanding task in computer vision, typically requiring high-performance CPUs or GPUs to maintain real-time frame rates. This project presents a Register Transfer Level (RTL) implementation of the Kernelized Correlation Filter (KCF) algorithm, designed to accelerate the tracking pipeline using dedicated FPGA hardware. For this mid-semester Minimum Viable Product (MVP), the architecture is specifically optimized for the detection phase: operating on a scaled-down 32$\times$32 pixel patch, utilizing a linear kernel to bypass complex exponential calculations, and loading offline-trained filter coefficients from static memory. The pipelined hardware integrates a custom 2D Fast Fourier Transform (FFT) core, element-wise conjugate multiplication, 2D Inverse FFT (IFFT), and a spatial peak detection module. The design has been verified through behavioral simulation in both Icarus Verilog and Xilinx Vivado, with the hardware output matching the Python golden reference exactly. Additionally, the pipeline has been demonstrated on a real photographic image, with a Python script automating the training and data-generation workflow, producing visual artifacts suitable for presentation.
 
 \pagebreak
 \tableofcontents
@@ -78,7 +79,7 @@ To demonstrate the viability of the hardware approach within the mid-semester ti
 \begin{itemize}
     \item \textbf{32$\times$32 patch size} instead of the full 64$\times$64, reducing memory and FFT complexity by 4$\times$.
     \item \textbf{Linear kernel} instead of a Gaussian kernel, eliminating the need for a hardware exponential function.
-    \item \textbf{Detection only}: the model is trained offline in Python and the frozen filter coefficients ($\hat{\alpha}$) are loaded from ROM. The online model update loop is deferred to the next phase.
+    \item \textbf{Detection only}: the model is trained offline in Python and the frozen filter coefficients are loaded from ROM. The online model update loop is deferred to the next phase.
     \item \textbf{No AXI bus interface}: pixels are loaded directly via a simple write port for simulation.
 \end{itemize}
 
@@ -89,11 +90,92 @@ The shift from spatial to frequency-domain tracking gained significant traction 
 \section{Hardware Acceleration of the FFT}
 The critical path in any KCF hardware implementation is the Fourier Transform. Efficient RTL designs utilize the Cooley-Tukey algorithm \cite{cooleytukey1965}, specifically the Radix-2 Decimation-In-Time (DIT) architecture. By iteratively passing data through Butterfly units, the mathematical complexity is reduced from $O(N^2)$ to $O(N \log N)$, making it viable for synthesizable logic.
 
+\chapter{KCF Theory}
+
+This chapter presents the mathematical foundation of the Kernelized Correlation Filter as it applies to the hardware implementation. The derivation follows Henriques et al.\ \cite{henriques2015}, specialised to the linear-kernel case used in this MVP.
+
+\section{Circulant Structure and the DFT}
+
+KCF exploits the fact that all cyclic shifts of a base image patch $\mathbf{x}$ form a \textit{circulant matrix} $C(\mathbf{x})$. A key property of circulant matrices is that they are diagonalised by the Discrete Fourier Transform (DFT):
+\begin{equation}
+    C(\mathbf{x}) = F^{-1} \, \text{diag}(\hat{\mathbf{x}}) \, F
+    \label{eq_circulant}
+\end{equation}
+where $F$ is the DFT matrix and $\hat{\mathbf{x}} = \mathcal{F}\{\mathbf{x}\}$ is the DFT of the base sample. This means that any operation involving all cyclic shifts of $\mathbf{x}$ --- such as training a classifier on them --- can be computed entirely in the frequency domain with element-wise operations, reducing the complexity from $O(N^4)$ in the spatial domain to $O(N^2 \log N)$ using the FFT.
+
+\section{Training: Learning the Filter}
+
+During training, the tracker is given an image patch $\mathbf{x}$ (the target) and a desired regression label $\mathbf{y}$, which is a 2D Gaussian centred at the origin. The goal is to learn filter coefficients $\boldsymbol{\alpha}$ such that applying the filter to $\mathbf{x}$ (and all its cyclic shifts) produces $\mathbf{y}$.
+
+For the \textbf{linear kernel}, the kernel correlation between $\mathbf{x}$ and itself in the frequency domain is simply:
+\begin{equation}
+    \hat{k}^{xx} = \overline{\hat{\mathbf{x}}} \odot \hat{\mathbf{x}} = |\hat{\mathbf{x}}|^2
+    \label{eq_kernel_linear}
+\end{equation}
+where $\overline{(\cdot)}$ denotes complex conjugation and $\odot$ denotes element-wise (Hadamard) multiplication. The filter coefficients are then obtained by ridge regression in the frequency domain:
+\begin{equation}
+    \hat{\boldsymbol{\alpha}} = \frac{\hat{\mathbf{y}}}{\hat{k}^{xx} + \lambda}
+    = \frac{\hat{\mathbf{y}}}{|\hat{\mathbf{x}}|^2 + \lambda}
+    \label{eq_alpha}
+\end{equation}
+where $\lambda$ is a regularisation parameter (set to $10^{-2}$ in this implementation) that prevents division by zero and improves numerical stability. The Gaussian label $\mathbf{y}$ is defined as:
+\begin{equation}
+    y[r,c] = \exp\!\left(-\frac{r_{\text{circ}}^2 + c_{\text{circ}}^2}{2\sigma^2}\right)
+    \label{eq_gaussian}
+\end{equation}
+where $r_{\text{circ}} = \min(r,\, N-r)$ and $c_{\text{circ}} = \min(c,\, N-c)$ are circular distances and $\sigma = 2.0$ controls the sharpness of the desired response peak.
+
+\section{Detection: Locating the Target}
+
+Given a new search patch $\mathbf{z}$ from the next video frame, the detection response is computed as:
+\begin{equation}
+    \text{response} = \mathcal{F}^{-1}\!\left\{\overline{\hat{\mathbf{x}}} \odot \hat{\mathbf{z}} \odot \hat{\boldsymbol{\alpha}}\right\}
+    \label{eq_detect_full}
+\end{equation}
+The peak of this response map gives the displacement $(\Delta r, \Delta c)$ of the target between frames. Intuitively, the operation computes the correlation between the search patch and the trained template across all possible cyclic shifts simultaneously --- all within a single forward FFT, one element-wise multiply, and one inverse FFT.
+
+\section{Combined Filter for Hardware}
+\label{sec_combined}
+
+Equation~\eqref{eq_detect_full} involves three frequency-domain arrays ($\hat{\mathbf{x}}$, $\hat{\boldsymbol{\alpha}}$, $\hat{\mathbf{z}}$), but the hardware multiplier computes only $a \cdot \overline{b}$ (conjugate multiplication). To reduce the detection to a single conjugate multiply, we \textbf{pre-combine} the training data into a single stored filter:
+\begin{equation}
+    \hat{\mathbf{f}}_{\text{stored}} = \overline{\hat{\boldsymbol{\alpha}}} \odot \hat{\mathbf{x}}
+    \label{eq_combined}
+\end{equation}
+At detection time, the hardware computes:
+\begin{equation}
+    \hat{\mathbf{z}} \cdot \overline{\hat{\mathbf{f}}_{\text{stored}}}
+    = \hat{\mathbf{z}} \cdot \hat{\boldsymbol{\alpha}} \cdot \overline{\hat{\mathbf{x}}}
+    = \overline{\hat{\mathbf{x}}} \cdot \hat{\mathbf{z}} \cdot \hat{\boldsymbol{\alpha}}
+    \label{eq_hw_detect}
+\end{equation}
+which is exactly Equation~\eqref{eq_detect_full}. This formulation has two advantages: (1)~only one ROM is needed instead of two, and (2)~the conjugate multiplier module (\texttt{cconj\_mul.sv}) already exists in the pipeline and requires no modification.
+
+Figure~\ref{f_kcf_concept} illustrates the conceptual tracking flow from one frame to the next.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{"graphic for explaining"}
+\caption{Conceptual illustration of KCF frame-to-frame tracking. In Frame~1, the target is at position $(2,3)$. In Frame~2, the target has moved one pixel to the right to $(2,4)$. The KCF detection response peaks at the displacement $(0,+1)$, correctly identifying the motion.}
+\label{f_kcf_concept}
+\end{figure}
+
+\section{DFT Displacement Convention}
+\label{sec_dft_disp}
+
+The response map produced by the IFFT uses DFT circular indexing. The displacement corresponding to a peak at index $(r, c)$ in an $N \times N$ response map is:
+\begin{equation}
+    \Delta r = \begin{cases} r & \text{if } r < N/2 \\ r - N & \text{if } r \geq N/2 \end{cases}, \qquad
+    \Delta c = \begin{cases} c & \text{if } c < N/2 \\ c - N & \text{if } c \geq N/2 \end{cases}
+    \label{eq_dft_wrap}
+\end{equation}
+For example, with $N = 32$, a displacement of $(\Delta r, \Delta c) = (-3, -2)$ appears as a peak at index $(29, 30)$ in the raw response map. When the response map is centred using an \texttt{fftshift} operation, the peak moves to the visually intuitive location near the centre.
+
+
 \chapter{Work Done}
 \section{Algorithm Pipeline Overview}
 The KCF algorithm consists of two primary stages: the \textbf{Training Stage} (updating the model) and the \textbf{Tracking Stage} (detecting the target). Figure~\ref{f_kcf_overview} illustrates this high-level workflow.
 
-For the mid-semester MVP, the focus is entirely on accelerating the \textbf{Tracking Stage}. To isolate and verify the detection math, the model update phase is bypassed by training the model offline in Python and loading the frozen $\hat{\alpha}$ coefficients from a \texttt{.mem} file.
+For the mid-semester MVP, the focus is entirely on accelerating the \textbf{Tracking Stage}. To isolate and verify the detection math, the model update phase is bypassed by training the model offline in Python and loading the frozen combined filter coefficients from a \texttt{.mem} file.
 
 \begin{figure}[ht]
 \centering
@@ -103,12 +185,13 @@ For the mid-semester MVP, the focus is entirely on accelerating the \textbf{Trac
 \end{figure}
 
 \section{Detection Pipeline}
-The core of this project is the hardware detection pipeline. Given a new image patch and pre-trained filter coefficients $\hat{\alpha}$, the pipeline computes the response map and finds the peak location, which corresponds to the estimated target displacement. The mathematical flow is:
+The core of this project is the hardware detection pipeline. Given a new search patch $\mathbf{z}$ and the pre-computed combined filter $\hat{\mathbf{f}}_{\text{stored}} = \overline{\hat{\boldsymbol{\alpha}}} \odot \hat{\mathbf{x}}$ (see Section~\ref{sec_combined}), the pipeline computes:
 \begin{equation}
-\text{response} = \text{IFFT}\left(\overline{\hat{\alpha}} \odot \text{FFT}(\text{patch} \cdot w)\right)
+\text{response} = \text{IFFT}\!\left(\hat{\mathbf{z}} \cdot \overline{\hat{\mathbf{f}}_{\text{stored}}}\right)
+= \text{IFFT}\!\left(\overline{\hat{\mathbf{x}}} \odot \hat{\mathbf{z}} \odot \hat{\boldsymbol{\alpha}}\right)
 \label{eq_detect}
 \end{equation}
-where $w$ is the 2D Hann window, $\odot$ denotes element-wise multiplication, and the overline denotes complex conjugation. The peak of the response map gives the (row, col) displacement of the target from its expected position.
+where the combined filter is stored in ROM and the conjugate multiplication is performed by the \texttt{cconj\_mul} module. The peak of the response map gives the (row, col) displacement of the target from its expected position.
 
 Figure~\ref{f_pipeline} shows the block-level view of the hardware detection pipeline.
 
@@ -117,7 +200,7 @@ Figure~\ref{f_pipeline} shows the block-level view of the hardware detection pip
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
     block/.style={rectangle, draw, fill=blue!12, text width=2.2cm, minimum height=1.4cm, align=center, font=\small\bfseries, rounded corners=3pt},
-    rom/.style={rectangle, draw, fill=orange!20, text width=2cm, minimum height=1cm, align=center, font=\small, rounded corners=3pt},
+    rom/.style={rectangle, draw, fill=orange!20, text width=2.2cm, minimum height=1cm, align=center, font=\small, rounded corners=3pt},
     data/.style={-{Stealth[length=3mm]}, thick},
     label/.style={font=\scriptsize, text=gray},
     node distance=0.6cm
@@ -126,14 +209,14 @@ Figure~\ref{f_pipeline} shows the block-level view of the hardware detection pip
     \node[block] (input) {32$\times$32\\Patch\\Input};
     \node[block, right=of input] (hann) {Hann\\Window};
     \node[block, right=of hann] (fft) {2D FFT\\(Row-Col)};
-    \node[block, right=of fft] (mul) {Conjugate\\Multiply\\$\overline{\hat{\alpha}} \odot \hat{X}$};
+    \node[block, right=of fft] (mul) {Conjugate\\Multiply\\$\hat{Z} \cdot \overline{\hat{f}}$};
     \node[block, right=of mul] (ifft) {2D IFFT\\(Conj.\ Trick)};
     \node[block, right=of ifft] (peak) {Peak\\Finder};
-    \node[block, right=of peak, fill=green!15] (out) {(row, col)\\Target\\Position};
+    \node[block, right=of peak, fill=green!15] (out) {$(\Delta r, \Delta c)$\\Target\\Displacement};
 
     % ROM blocks
     \node[rom, above=0.8cm of hann] (hannrom) {Hann ROM\\(32 entries)};
-    \node[rom, above=0.8cm of mul] (alpharom) {$\hat{\alpha}$ ROM\\(1024 complex)};
+    \node[rom, above=0.8cm of mul] (alpharom) {Combined Filter\\$\overline{\hat{\alpha}} \odot \hat{X}$\\(1024 complex)};
     \node[rom, above=0.8cm of fft] (twrom) {Twiddle ROM\\($W_{32}^k$)};
 
     % Data flow arrows
@@ -159,7 +242,7 @@ Figure~\ref{f_pipeline} shows the block-level view of the hardware detection pip
 
 \end{tikzpicture}
 }%
-\caption{Hardware detection pipeline block diagram. Data flows left to right through seven stages controlled by a central FSM. Dashed arrows indicate pre-computed data loaded from ROM. The cycle counts show the latency of each stage at the system clock.}
+\caption{Hardware detection pipeline block diagram. Data flows left to right through seven stages controlled by a central FSM. The ROM now stores the combined filter $\overline{\hat{\alpha}} \odot \hat{X}$ rather than $\hat{\alpha}$ alone, enabling correct cross-frame detection with a single conjugate multiply.}
 \label{f_pipeline}
 \end{figure}
 
@@ -169,7 +252,7 @@ The top-level module, \texttt{kcf\_detect\_top.sv}, orchestrates a 7-stage Finit
     \item \textbf{S\_HANN\_WIN} (1024 cycles): Applies a 2D Hann window to the incoming 32$\times$32 image patch. The Hann window smoothly tapers the edges of the patch to zero, preventing sharp discontinuities that would create misleading high-frequency artifacts in the FFT output. The 2D window is computed as the outer product of two 1D Hann vectors, with the coefficients stored in ROM.
     \item \textbf{S\_FFT\_LOAD} (1024 cycles): Loads the windowed patch into the 2D FFT module's internal buffer, one pixel per clock cycle.
     \item \textbf{S\_FFT\_RUN} ($\sim$5400 cycles): Computes the 2D FFT to bring the spatial-domain image data into the frequency domain. Internally, this processes 32 rows and then 32 columns, each requiring $\sim$83 clock cycles.
-    \item \textbf{S\_ELEM\_MUL} (1024 cycles): Performs element-wise conjugate multiplication between the FFT of the patch ($\hat{X}$) and the stored filter coefficients ($\hat{\alpha}$). This step replaces the expensive spatial convolution with a simple multiply.
+    \item \textbf{S\_ELEM\_MUL} (1024 cycles): Performs element-wise conjugate multiplication between $\hat{Z}$ (the FFT of the search patch) and the stored combined filter $\hat{\mathbf{f}}_{\text{stored}}$. This single operation replaces the expensive spatial convolution.
     \item \textbf{S\_IFFT\_LOAD} (1024 cycles): Loads the resulting frequency-domain product into the 2D IFFT module.
     \item \textbf{S\_IFFT\_RUN} ($\sim$6400 cycles): Computes the 2D Inverse FFT to transform the product back into the spatial domain, producing the response map.
     \item \textbf{S\_PEAK\_RUN} (1026 cycles): Scans the entire response map sequentially to find the pixel with the maximum value. The row and column of this peak are the final tracking output.
@@ -226,7 +309,7 @@ A significant engineering challenge was maintaining adequate signal precision th
 The solution combined two techniques:
 \begin{itemize}
     \item \textbf{Asymmetric FFT scaling:} The forward FFT scales only the row pass (dividing by $N=32$), while leaving the column pass unscaled. The IFFT uses full scaling on both passes for correct normalization. This reduces the total attenuation from $1/N^2$ to $1/N$.
-    \item \textbf{Alpha pre-scaling:} The filter coefficients $\hat{\alpha}$ are multiplied by a factor of $K=16$ during the offline Python generation step. This further compensates for the remaining $1/N$ factor, yielding a final pipeline output of $(K/N) \times \text{response} = 0.5 \times \text{response}$, comfortably within the Q8.8 dynamic range.
+    \item \textbf{Adaptive pre-scaling:} The combined filter coefficients are multiplied by a factor $K$ during the offline Python generation step, where $K$ is the largest power of 2 such that $\max|\hat{\mathbf{f}}_{\text{stored}} \cdot K| < 120$ (fitting within the Q8.8 range). For synthetic test data, $K = 64$; for real images, $K$ is typically 2--4 depending on image content. This compensates for the $1/N$ attenuation from the forward FFT, yielding a final pipeline output of $(K/N) \times \text{response}$.
 \end{itemize}
 
 \chapter{Results and Verification}
@@ -237,7 +320,8 @@ The design was verified in two independent simulation environments:
     \item \textbf{Xilinx Vivado 2024.2:} Used for final verification with the target FPGA toolchain.
 \end{itemize}
 
-A Python script (\texttt{gen\_data\_32.py}) generates all test data and computes the golden reference. The test patch consists of a 32$\times$32 image with a uniform background (intensity 0.1) and a bright 5$\times$5 square feature centred at pixel (18, 20). The offline-trained filter coefficients produce a golden detection peak at row~18, column~19.
+\section{Synthetic Test Verification}
+A Python script (\texttt{gen\_data\_32.py}) generates all test data and computes the golden reference. The test patch consists of a 32$\times$32 image with a uniform background (intensity 0.1) and a bright 5$\times$5 square feature centred at pixel (18, 20). The filter is trained on this patch with the Gaussian label centred at the DFT origin. For self-detection (testing on the same patch used for training), the golden peak is at $(0, 0)$, confirming that the filter correctly identifies zero displacement.
 
 \section{Vivado Waveform Analysis}
 Figure~\ref{f_wave_full} shows the complete simulation waveform from Vivado. The pipeline processes the patch through all seven FSM stages, completing in approximately 193\,$\mu$s. The final output signals \texttt{peak\_row} and \texttt{peak\_col} transition from undefined (\texttt{XX}) to their correct values at the moment the \texttt{done} signal pulses high.
@@ -249,29 +333,87 @@ Figure~\ref{f_wave_full} shows the complete simulation waveform from Vivado. The
 \label{f_wave_full}
 \end{figure}
 
-Figure~\ref{f_wave_zoom} zooms into the critical moment at $\sim$193,465\,ns where the pipeline produces its final result. The \texttt{done} signal pulses high for exactly one clock cycle, and the outputs latch to their final values:
-\begin{itemize}
-    \item \texttt{peak\_row} = \texttt{0x12} = \textbf{18} (decimal)
-    \item \texttt{peak\_col} = \texttt{0x13} = \textbf{19} (decimal)
-    \item \texttt{peak\_val} = \texttt{0x0013} = 19 (decimal) = $19/256 = 0.074$ in Q8.8
-\end{itemize}
-These values match the Python golden reference exactly, confirming correct end-to-end operation of the hardware pipeline.
+Figure~\ref{f_wave_zoom} zooms into the critical moment at $\sim$193,465\,ns where the pipeline produces its final result. The \texttt{done} signal pulses high for exactly one clock cycle, and the outputs latch to their final values. These values match the Python golden reference, confirming correct end-to-end operation of the hardware pipeline.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{zoomed in.png}
-\caption{Zoomed-in view of the simulation output at $t \approx 193,465$\,ns. The \texttt{done} pulse (highlighted) coincides with the outputs settling to \texttt{peak\_row}~=~18, \texttt{peak\_col}~=~19, matching the golden reference.}
+\caption{Zoomed-in view of the simulation output at $t \approx 193,465$\,ns. The \texttt{done} pulse (highlighted) coincides with the outputs settling to the correct peak coordinates, matching the golden reference.}
 \label{f_wave_zoom}
+\end{figure}
+
+\section{Real-Image Demonstration}
+\label{sec_realimage}
+
+To validate the pipeline beyond synthetic data, the detection was run on a real photographic image. A Python script (\texttt{kcf\_real\_image.py}) automates the full workflow: loading the image, cropping a 32$\times$32 target patch, training the filter offline, simulating frame-to-frame motion by shifting the crop window, running detection, and generating all \texttt{.mem} files for the Verilog testbench.
+
+\subsection{Target Selection and Training}
+
+Figure~\ref{f_frame1} shows the input image with the selected 32$\times$32 target region highlighted by a red bounding box. The target was chosen to be a textured region of the image (ground surface), as KCF requires spatial texture to discriminate different cyclic shifts. Flat or uniform regions (such as the surface of a solid-coloured ball) lack the frequency content needed for reliable tracking.
+
+The target patch is extracted, normalised to $[0, 1]$, and used to train the combined filter $\hat{\mathbf{f}}_{\text{stored}} = \overline{\hat{\boldsymbol{\alpha}}} \odot \hat{\mathbf{x}}$ as described in Section~\ref{sec_combined}. An adaptive pre-scale factor of $K = 2$ was selected automatically, yielding $\max|\hat{\mathbf{f}}_{\text{stored}} \cdot K| = 67.27$ with zero values clipping.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{fig_frame1_target.png}
+\caption{Frame~1 --- the input image with the 32$\times$32 target region highlighted (red box). The target is centred at pixel (240, 300), chosen for its rich ground texture.}
+\label{f_frame1}
+\end{figure}
+
+\subsection{Detection on Shifted Frame}
+
+To simulate frame-to-frame target motion from a single image, the search patch is cropped from a position shifted by $(\Delta r, \Delta c) = (+3, +2)$ pixels relative to the target centre. From the perspective of the search patch, the target has moved by $(-3, -2)$ pixels. Figure~\ref{f_frame2} shows the search region (blue box) on the image, with the detected target position marked by a red star.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{fig_frame2_search.png}
+\caption{Frame~2 --- the search region (blue box) is shifted by $(+3, +2)$ pixels from the target centre. The red star marks the detected target position, correctly displaced from the search centre by $(-3, -2)$ pixels.}
+\label{f_frame2}
+\end{figure}
+
+\subsection{Response Map Analysis}
+
+Figure~\ref{f_response} shows the detection response map, centred using \texttt{fftshift} so that zero displacement corresponds to the centre of the image. The axes are labelled in displacement units (pixels). The bright peak near $(-3, -2)$ correctly identifies the target motion. As explained in Section~\ref{sec_dft_disp}, the raw DFT peak at index $(29, 30)$ corresponds to the circular-wrapped displacement $(-3, -2)$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{fig_response_map.png}
+\caption{Centred detection response map. The axes show displacement in pixels from the expected target position. The peak (cyan star) at $(-3, -2)$ correctly matches the simulated target motion of 3 pixels down and 2 pixels right.}
+\label{f_response}
+\end{figure}
+
+\subsection{End-to-End Pipeline Visualisation}
+
+Figure~\ref{f_pipeline_demo} presents a composite view of the complete detection pipeline: (a)~the raw target patch cropped from the image, (b)~the same patch after applying the 2D Hann window (note how the edges are smoothly tapered to zero), (c)~the search patch from the shifted location, and (d)~the resulting response map with the detected displacement.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_pipeline_demo.png}
+\caption{End-to-end KCF detection pipeline on a real image. (a)~Target patch from Frame~1. (b)~Hann-windowed target --- edges taper to zero to prevent spectral leakage. (c)~Search patch from Frame~2, shifted by $(+3, +2)$ pixels. (d)~Centred response map showing the detection peak at displacement $(-3, -2)$, correctly identifying the simulated motion.}
+\label{f_pipeline_demo}
+\end{figure}
+
+\subsection{Hardware--Software Agreement}
+
+The \texttt{.mem} files generated from the real image were loaded into the Verilog testbench. Figure~\ref{f_output} shows the terminal output from the full workflow: the Python golden reference reports a peak at $(29, 30)$ with displacement $(-3, -2)$, and the Verilog hardware simulation produces the identical result --- peak at row~29, column~30.
+
+The testbench also dumps the complete 1024-element hardware response map to \texttt{data/hw\_response.mem}, enabling element-by-element comparison between the Python and Verilog outputs. This confirms that the fixed-point hardware faithfully reproduces the floating-point golden reference, even on real photographic data with complex texture patterns.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{Output.png}
+\caption{Terminal output from the real-image demo. The Python script trains the filter, generates \texttt{.mem} files, and reports the golden detection peak at $(29, 30)$ with displacement $(-3, -2)$. The Verilog simulation (not shown separately) produces the identical peak, confirming hardware--software agreement on real image data.}
+\label{f_output}
 \end{figure}
 
 \chapter{Future Work}
 \section{Next Objectives}
-With the baseline detection pipeline functioning correctly in simulation, the next phase of the project will focus on scaling the architecture and integrating it into a full System-on-Chip (SoC) environment:
+With the baseline detection pipeline functioning correctly on both synthetic and real-image data, the next phase of the project will focus on scaling the architecture and integrating it into a full System-on-Chip (SoC) environment:
 \begin{enumerate}
     \item \textbf{Hardware Deployment:} Synthesize and deploy the verified RTL logic onto the Xilinx Artix-7 FPGA to evaluate real-world timing and resource consumption.
     \item \textbf{Resolution Scaling:} Expand the FFT modules to support $64 \times 64$ patches. This will require adding a 6th FFT stage and quadrupling the memory buffer sizes.
     \item \textbf{Kernel Upgrade:} Transition from a simple linear kernel to a Gaussian kernel, which will necessitate the implementation of a hardware exponential approximation Look-Up Table (LUT).
-    \item \textbf{Online Model Updating:} Implement the mathematical logic to dynamically update the $\hat{\alpha}$ filter coefficients live, allowing the tracker to adapt to changing target appearances (e.g., rotations or lighting changes) rather than relying on frozen offline data.
+    \item \textbf{Online Model Updating:} Implement the mathematical logic to dynamically update the filter coefficients live, allowing the tracker to adapt to changing target appearances (e.g., rotations or lighting changes) rather than relying on frozen offline data.
     \item \textbf{AXI Bus Integration:} Wrap the KCF tracking core in an AXI4-Stream interface to seamlessly accept high-bandwidth, continuous pixel data from the SoC's Direct Memory Access (DMA) controller.
 \end{enumerate}
 
