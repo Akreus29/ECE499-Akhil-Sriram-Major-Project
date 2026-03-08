@@ -17,6 +17,14 @@ module cconj_mul #(
     output wire signed [DATA_WIDTH-1:0] out_im
 );
 
-    // TODO: implement using cmul with negated b_im, or directly
+    // Reuse cmul with negated b_im to compute a * conj(b)
+    cmul #(.DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) u_cmul (
+        .a_re(a_re),
+        .a_im(a_im),
+        .b_re(b_re),
+        .b_im(-b_im),    // negate to conjugate
+        .out_re(out_re),
+        .out_im(out_im)
+    );
 
 endmodule

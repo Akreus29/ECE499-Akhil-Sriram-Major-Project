@@ -17,6 +17,13 @@ module cmul #(
     output wire signed [DATA_WIDTH-1:0] out_im
 );
 
-    // TODO: 2*DATA_WIDTH intermediate products, truncate back to DATA_WIDTH
+    localparam MSB = FRAC + DATA_WIDTH - 1;   // 23
+    localparam LSB = FRAC;                     // 8
+
+    wire signed [2*DATA_WIDTH-1:0] re_full = (a_re * b_re) - (a_im * b_im);
+    wire signed [2*DATA_WIDTH-1:0] im_full = (a_re * b_im) + (a_im * b_re);
+
+    assign out_re = re_full[MSB:LSB];
+    assign out_im = im_full[MSB:LSB];
 
 endmodule
