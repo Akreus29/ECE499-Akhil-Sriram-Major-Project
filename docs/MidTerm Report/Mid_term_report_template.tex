@@ -84,8 +84,82 @@ To demonstrate the viability of the hardware approach within the mid-semester ti
 \end{itemize}
 
 \chapter{Literature Survey}
-\section{Correlation Filters in Computer Vision}
-The shift from spatial to frequency-domain tracking gained significant traction with the introduction of Minimum Output Sum of Squared Error (MOSSE) filters \cite{bolme2010}, which later evolved into KCF. KCF improved upon its predecessors by introducing the ``Kernel Trick,'' allowing the filter to map features into a higher-dimensional space for better target separation, while maintaining the speed advantages of the FFT \cite{henriques2015}.
+
+\section{The MOSSE Filter}
+The Minimum Output Sum of Squared Error (MOSSE) filter, introduced by Bolme et al.\ \cite{bolme2010}, was among the first trackers to demonstrate that frequency-domain correlation could achieve real-time speeds while maintaining competitive accuracy. The core idea is to learn a filter $H^{*}$ in the frequency domain that, when correlated with an image patch $F$, produces an output $G$ that peaks sharply at the target location:
+\begin{equation}
+    G = H^{*} \odot F
+    \label{eq_mosse}
+\end{equation}
+The optimal filter is obtained by minimising the sum of squared errors between the actual correlation output and a desired Gaussian-shaped response $G_i$ over a set of training frames $F_i$:
+\begin{equation}
+    H^{*} = \frac{\sum_i G_i \odot \overline{F_i}}{\sum_i F_i \odot \overline{F_i}}
+    \label{eq_mosse_filter}
+\end{equation}
+where $\overline{(\cdot)}$ denotes complex conjugation. Because all operations are element-wise in the frequency domain, MOSSE runs at several hundred frames per second on a single CPU core. It also supports online model updates by maintaining running averages of the numerator and denominator, allowing the filter to adapt to appearance changes over time.
+
+However, MOSSE has a fundamental limitation: it operates on \textbf{raw pixel intensities} and learns a strictly \textbf{linear} relationship between the input patch and the desired response. This means the filter can only capture linear correlations in the image, limiting its ability to distinguish the target from visually similar distractors or to handle non-linear appearance variations such as partial occlusions, illumination changes, and in-plane rotations.
+
+\section{The KCF Tracker}
+The Kernelized Correlation Filter (KCF), proposed by Henriques et al.\ \cite{henriques2015}, builds directly on the MOSSE framework but introduces a critical enhancement: the \textbf{kernel trick}. Instead of correlating raw pixel patches linearly, KCF first maps the patches into a higher-dimensional feature space using a kernel function $\kappa(\mathbf{x}, \mathbf{x}')$:
+\begin{equation}
+    k^{xx'}[m] = \kappa\!\left(\mathbf{P}^m \mathbf{x},\; \mathbf{x}'\right)
+    \label{eq_kernel}
+\end{equation}
+where $\mathbf{P}^m \mathbf{x}$ is the $m$-th cyclic shift of $\mathbf{x}$. The key theoretical insight of KCF is that kernel correlations of circulant data can still be diagonalised by the DFT \cite{henriques2015}, preserving the $O(N^2 \log N)$ computational advantage while operating in the richer kernel feature space.
+
+Common kernel choices include:
+\begin{itemize}
+    \item \textbf{Linear kernel:} $\kappa(\mathbf{x}, \mathbf{x}') = \mathbf{x}^T \mathbf{x}'$ --- equivalent to MOSSE, but derived within the KCF framework.
+    \item \textbf{Gaussian (RBF) kernel:} $\kappa(\mathbf{x}, \mathbf{x}') = \exp\!\left(-\|\mathbf{x} - \mathbf{x}'\|^2 / 2\sigma^2\right)$ --- captures non-linear relationships, significantly improving robustness.
+\end{itemize}
+
+\section{MOSSE vs.\ KCF: Comparison}
+
+Table~\ref{tab_comparison} summarises the key differences between the two trackers. While both share the same FFT-based computational backbone, KCF consistently outperforms MOSSE in tracking accuracy due to the kernel extension.
+
+\begin{table}[H]
+\centering
+\caption{Comparison of MOSSE and KCF trackers.}
+\label{tab_comparison}
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Property} & \textbf{MOSSE} & \textbf{KCF} \\
+\hline
+Feature space           & Raw pixels (linear)       & Kernel-mapped (non-linear) \\
+\hline
+Core operation          & $H^* \odot F$             & $\hat{\alpha} \odot \hat{k}^{xz}$ \\
+\hline
+Computational backbone  & FFT / IFFT                & FFT / IFFT \\
+\hline
+Training complexity     & $O(N^2 \log N)$           & $O(N^2 \log N)$ \\
+\hline
+Detection complexity    & $O(N^2 \log N)$           & $O(N^2 \log N)$ \\
+\hline
+Robustness to clutter   & Low                       & High \\
+\hline
+Handles non-linear      & No                        & Yes (with Gaussian kernel) \\
+appearance changes      &                           & \\
+\hline
+OTB-2013 avg.\ precision\cite{henriques2015} & 0.669 & 0.732 \\
+\hline
+Hardware complexity     & Low                       & Low (linear) / Moderate (Gaussian) \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Justification for Choosing KCF}
+
+Both MOSSE and KCF share the same computational backbone --- an FFT, an element-wise multiply, and an IFFT --- which means the hardware pipeline is nearly identical in both cases. The only difference is what gets stored in the filter ROM and how the element-wise multiplication is configured. Given that the hardware cost is essentially the same, the choice came down to tracking accuracy and extensibility.
+
+KCF was selected for the following reasons:
+\begin{enumerate}
+    \item \textbf{Strictly superior accuracy at equal cost:} With a linear kernel, KCF reduces to MOSSE but is derived within a more principled ridge-regression framework, giving slightly better regularisation behaviour. The hardware pipeline is identical.
+    \item \textbf{Upgrade path to Gaussian kernel:} The KCF framework naturally accommodates a Gaussian kernel upgrade. This would require adding a single hardware exponential LUT to the pipeline but would yield a significant jump in tracking robustness --- a path that is not available within the MOSSE formulation.
+    \item \textbf{Broader research ecosystem:} KCF has spawned numerous extensions (DCF, CN, DSST \cite{danelljan2014}) that build on the same circulant structure. Choosing KCF as the base architecture ensures compatibility with future algorithmic improvements.
+    \item \textbf{Published benchmarks:} KCF achieves 73.2\% average precision on OTB-2013 compared to MOSSE's 66.9\% \cite{henriques2015}, a 9.4\% relative improvement, while maintaining the same frame rate.
+\end{enumerate}
+In summary, since the hardware cost of implementing KCF is no greater than MOSSE for the linear-kernel case, and KCF provides both better accuracy and a clear upgrade path, it was the natural choice for this project.
 
 \section{Hardware Acceleration of the FFT}
 The critical path in any KCF hardware implementation is the Fourier Transform. Efficient RTL designs utilize the Cooley-Tukey algorithm \cite{cooleytukey1965}, specifically the Radix-2 Decimation-In-Time (DIT) architecture. By iteratively passing data through Butterfly units, the mathematical complexity is reduced from $O(N^2)$ to $O(N \log N)$, making it viable for synthesizable logic.

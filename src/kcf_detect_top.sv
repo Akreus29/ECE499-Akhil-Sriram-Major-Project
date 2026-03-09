@@ -75,7 +75,7 @@ module kcf_detect_top #(
     reg signed [DATA_WIDTH-1:0] alpha_flat [0:2*TOTAL-1];
     integer init_i;
     initial begin
-        $readmemh("data/alpha_hat.mem", alpha_flat);
+        $readmemh("C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data/alpha_hat.mem", alpha_flat);
         for (init_i = 0; init_i < TOTAL; init_i = init_i + 1) begin
             alpha_re[init_i] = alpha_flat[2*init_i];
             alpha_im[init_i] = alpha_flat[2*init_i + 1];

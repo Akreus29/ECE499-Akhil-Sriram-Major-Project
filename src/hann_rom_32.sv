@@ -15,7 +15,7 @@ module hann_rom_32 #(
     reg [DATA_WIDTH-1:0] mem [0:N-1];
 
     initial begin
-        $readmemh("data/hann_32.mem", mem);
+        $readmemh("C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data/hann_32.mem", mem);
     end
 
     assign w_out = mem[addr];

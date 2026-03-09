@@ -18,7 +18,7 @@ module twiddle_rom_32 #(
     reg signed [DATA_WIDTH-1:0] mem [0:N-1];
 
     initial begin
-        $readmemh("data/twiddle_32.mem", mem);
+        $readmemh("C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data/twiddle_32.mem", mem);
     end
 
     // addr*2 = {addr, 1'b0},  addr*2+1 = {addr, 1'b1}

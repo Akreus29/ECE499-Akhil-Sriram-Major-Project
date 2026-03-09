@@ -46,7 +46,7 @@ module tb_kcf_detect_top;
         $dumpvars(0, tb_kcf_detect_top);
 
         // Load test patch
-        $readmemh("data/test_patch_32.mem", patch_mem);
+        $readmemh("C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data/test_patch_32.mem", patch_mem);
 
         // Reset
         rst_n = 0;
@@ -87,7 +87,7 @@ module tb_kcf_detect_top;
         // Dump full response map for Python comparison
         begin
             integer fd, ri;
-            fd = $fopen("data/hw_response.mem", "w");
+            fd = $fopen("C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data/hw_response.mem", "w");
             if (fd) begin
                 for (ri = 0; ri < TOTAL; ri = ri + 1) begin
                     $fwrite(fd, "%04x\n", dut.resp_map[ri]);
