@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(py scripts/gen_data_32.py)"
-    ]
-  }
-}
