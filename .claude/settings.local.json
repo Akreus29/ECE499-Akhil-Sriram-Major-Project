@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(py scripts/gen_data_32.py)"
+      "Bash(py scripts/gen_data_32.py)",
+      "Bash(python3 -c \"from PIL import Image; import os; d=''C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data''; [print\\(f''{f}: {Image.open\\(os.path.join\\(d,f\\)\\).size}''\\) for f in os.listdir\\(d\\) if f.endswith\\(''.png''\\)]\")",
+      "Bash(python -c \"from PIL import Image; import os; d=''C:/Users/Admin/Documents/work/ECE499/ECE499-Akhil-Sriram-Major-Project/data''; [print\\(f''{f}: {Image.open\\(os.path.join\\(d,f\\)\\).size}''\\) for f in os.listdir\\(d\\) if f.endswith\\(''.png''\\)]\")"
     ]
   }
 }
