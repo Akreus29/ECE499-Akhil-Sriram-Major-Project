@@ -2,11 +2,11 @@
 kcf_demo_visual.py — Interactive 3-frame NCC→KCF tracking demo.
 
   1. Frame 1 (Demo_test_1): Click to select target → Train KCF
-  2. Frame 1: Show KCF self-test response (peak at 0,0)
+  2. Frame 1: KCF self-test — peak at (0,0), explains training formula
   3. Frame 2 (Demo_test_2): Show new frame
-  4. Frame 2: NCC full-image search → TARGET FOUND
-  5. "Switching to KCF tracking..."
-  6. Frame 3 (Frame 3 (shifted)): KCF ONLY at last known position → displacement
+  4. Frame 2: NCC full-image search → TARGET FOUND, explains NCC formula
+  5. "Switching to KCF tracking..." — explains NCC vs KCF complexity
+  6. Frame 3 (shifted): KCF ONLY → detection formula + displacement
   7. Summary
 
 Usage:
@@ -104,6 +104,21 @@ def wait(fig, msg=''):
     plt.waitforbuttonpress()
 
 
+# ── Styled info panel ─────────────────────────────────────────────────────────
+
+def info_panel(fig, title, title_color, lines, ec='white'):
+    """Draw the right-side info panel. lines = list of (text, color, size, bold)."""
+    # Build a single string — matplotlib doesn't support per-line styling in fig.text,
+    # so we use a pre-formatted monospace block with Unicode box chars for sections.
+    body = f'{title}\n{"─" * max(len(l[0]) for l in lines)}\n'
+    for text, *_ in lines:
+        body += f'{text}\n'
+    # Find dominant color for bbox border
+    return fig.text(0.795, 0.50, body, fontsize=11, color='white',
+                    ha='center', va='center', fontfamily='monospace',
+                    bbox=dict(fc='#111111', ec=title_color, lw=2, pad=14))
+
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -132,15 +147,19 @@ def main():
                      fontsize=16, fontweight='bold', color='red', pad=10)
     ax_img.axis('off')
 
-    fig.text(0.80, 0.5,
-             f'Step 1 / {STEPS}\n\n'
-             f'Click on the image\n'
-             f'to select the\n'
-             f'target centre\n\n'
-             f'(32x32 patch)',
-             fontsize=14, color='white', ha='center', va='center',
+    fig.text(0.795, 0.50,
+             'Step 1 / 7  ─  SELECT TARGET\n'
+             '─────────────────────────────\n'
+             'Click the object you want\n'
+             'to track.\n\n'
+             'KCF will memorise its\n'
+             f'texture in a {N}x{N} patch\n'
+             'and learn a frequency-\n'
+             'domain filter from it.\n\n'
+             '(click image to select)',
+             fontsize=11, color='white', ha='center', va='center',
              fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='red', lw=2, pad=15))
+             bbox=dict(fc='#111111', ec='red', lw=2, pad=14))
     plt.show(block=False)
     fig.canvas.draw()
     print('  >> Step 1: Click on Frame 1 to select target centre...')
@@ -161,21 +180,21 @@ def main():
                         facecolor='none', linestyle='--')
     ax_img.add_patch(rect_t)
     ax_img.plot(c1_c, c1_r, '+', color='red', ms=20, mew=3)
-    ax_img.set_title(f'Frame 1  |  Target at ({c1_r}, {c1_c})',
+    ax_img.set_title(f'Frame 1  |  Target selected at ({c1_r}, {c1_c})',
                      fontsize=16, fontweight='bold', color='white', pad=10)
 
     for child in fig.texts[:]:
         child.remove()
-    fig.text(0.80, 0.5,
-             f'Step 1 / {STEPS}\n\n'
-             f'Target selected:\n'
+    fig.text(0.795, 0.50,
+             'Step 1 / 7  ─  TARGET SELECTED\n'
+             '─────────────────────────────────\n'
              f'  centre = ({c1_r}, {c1_c})\n'
-             f'  size   = {N}x{N}\n\n'
-             f'Training KCF...\n'
-             f'(click to continue)',
-             fontsize=14, color='white', ha='center', va='center',
+             f'  patch  = {N}x{N} px\n\n'
+             'Training KCF filter...\n\n'
+             '(click to see response)',
+             fontsize=11, color='white', ha='center', va='center',
              fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='red', lw=2, pad=15))
+             bbox=dict(fc='#111111', ec='red', lw=2, pad=14))
     fig.canvas.draw()
 
     # Train KCF
@@ -192,7 +211,6 @@ def main():
     ncc2, tl2_r, tl2_c, ncc2_val = ncc_search(img2, target)
     c2_r, c2_c = tl2_r + half, tl2_c + half
 
-    # KCF on Frame 2 patch (at NCC position) for .mem file
     p2_r = max(0, min(tl2_r, img2.shape[0] - N))
     p2_c = max(0, min(tl2_c, img2.shape[1] - N))
     patch2 = img2[p2_r:p2_r+N, p2_c:p2_c+N]
@@ -234,25 +252,41 @@ def main():
     for child in fig.texts[:]:
         child.remove()
 
-    ax_img.set_title('Frame 1  |  KCF Trained  |  Target confirmed at centre',
+    ax_img.set_title('Frame 1  |  KCF Filter Trained',
                      fontsize=15, fontweight='bold', color='cyan', pad=10)
 
-    ax_kcf = fig.add_axes([0.62, 0.12, 0.35, 0.72])
+    ax_kcf = fig.add_axes([0.58, 0.38, 0.20, 0.48])
     ax_kcf.imshow(resp1_s, cmap='hot', interpolation='nearest', extent=ext)
-    ax_kcf.plot(d1_c, d1_r, 'c*', ms=22, mec='white', mew=2)
+    ax_kcf.plot(d1_c, d1_r, 'c*', ms=18, mec='white', mew=2)
     ax_kcf.axhline(0, color='white', lw=0.5, alpha=0.4)
     ax_kcf.axvline(0, color='white', lw=0.5, alpha=0.4)
-    ax_kcf.set_title(f'KCF Response  |  Peak at ({d1_r:+d}, {d1_c:+d})',
-                     fontsize=13, fontweight='bold', color='white', pad=8)
-    ax_kcf.set_xlabel('Col displacement', color='white')
-    ax_kcf.set_ylabel('Row displacement', color='white')
-    ax_kcf.tick_params(colors='white')
+    ax_kcf.set_title(f'Response  peak=({d1_r:+d},{d1_c:+d})',
+                     fontsize=10, fontweight='bold', color='cyan', pad=5)
+    ax_kcf.set_xlabel('col disp', color='white', fontsize=8)
+    ax_kcf.set_ylabel('row disp', color='white', fontsize=8)
+    ax_kcf.tick_params(colors='white', labelsize=7)
     for spine in ax_kcf.spines.values():
         spine.set_edgecolor('white')
 
-    fig.text(0.80, 0.92,
-             f'Step 2 / {STEPS} — KCF trained, peak at centre  (click to continue)',
-             fontsize=11, color='gray', ha='center', va='center')
+    fig.text(0.895, 0.50,
+             'Step 2 / 7  ─  KCF TRAINING\n'
+             '──────────────────────────────\n'
+             'ALGORITHM:\n'
+             '  w  = patch x Hann2D\n'
+             '  X  = FFT2(w)\n'
+             '  Y  = FFT2(Gaussian label)\n'
+             '  a  = Y / (|X|^2 + lambda)\n\n'
+             f'  lambda = 0.01  (ridge reg.)\n'
+             f'  sigma  = 2.0   (label width)\n\n'
+             'RESULT:\n'
+             '  Peak at (0,0) = target is\n'
+             '  centred in its own window.\n'
+             '  Filter a is frozen for\n'
+             '  tracking in future frames.\n\n'
+             '(click to continue)',
+             fontsize=10, color='white', ha='center', va='center',
+             fontfamily='monospace',
+             bbox=dict(fc='#111111', ec='cyan', lw=2, pad=12))
     fig.canvas.draw()
     wait(fig, 'Step 2: KCF trained - peak at (0,0)')
 
@@ -264,18 +298,23 @@ def main():
     ax_kcf.clear(); ax_kcf.axis('off')
     ax_img.clear()
     ax_img.imshow(img2, cmap='gray', vmin=0, vmax=1)
-    ax_img.set_title('Frame 2  (Demo_test_2)', fontsize=16,
-                     fontweight='bold', color='white', pad=10)
+    ax_img.set_title('Frame 2  (Demo_test_2)  —  New frame received',
+                     fontsize=16, fontweight='bold', color='white', pad=10)
     ax_img.axis('off')
 
-    fig.text(0.80, 0.5,
-             f'Step 3 / {STEPS}\n\n'
-             f'Frame 2 loaded\n\n'
-             f'Where is the target?\n\n'
-             f'(click to run NCC)',
-             fontsize=14, color='white', ha='center', va='center',
+    fig.text(0.795, 0.50,
+             'Step 3 / 7  ─  FRAME 2\n'
+             '───────────────────────────\n'
+             'New frame has arrived.\n\n'
+             'The camera panned —\n'
+             'the target has moved.\n\n'
+             'WHERE is it now?\n\n'
+             'Running NCC to search\n'
+             'the entire image...\n\n'
+             '(click to run NCC)',
+             fontsize=11, color='white', ha='center', va='center',
              fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='white', lw=2, pad=15))
+             bbox=dict(fc='#111111', ec='white', lw=2, pad=14))
     fig.canvas.draw()
     wait(fig, 'Step 3: Showing Frame 2')
 
@@ -295,16 +334,26 @@ def main():
     ax_img.set_title(f'Frame 2  |  NCC Search  |  TARGET FOUND at ({c2_r}, {c2_c})',
                      fontsize=15, fontweight='bold', color='lime', pad=10)
 
-    fig.text(0.80, 0.5,
-             f'Step 4 / {STEPS}\n\n'
-             f'NCC full-image search\n\n'
-             f'Target found at:\n'
+    fig.text(0.795, 0.50,
+             'Step 4 / 7  ─  NCC SEARCH\n'
+             '──────────────────────────────\n'
+             'ALGORITHM:\n'
+             '  corr = IFFT(conj(T)*I)\n'
+             '  NCC  = corr /\n'
+             '    (||t|| x N x sigma_local)\n\n'
+             'Complexity: O(MN log MN)\n'
+             'Searches full image at once.\n\n'
+             'RESULT:\n'
              f'  centre = ({c2_r}, {c2_c})\n'
-             f'  NCC    = {ncc2_val:.3f}\n\n'
-             f'TARGET FOUND',
-             fontsize=14, color='lime', ha='center', va='center',
+             f'  score  = {ncc2_val:.4f}\n\n'
+             '>>> TARGET FOUND <<<\n\n'
+             'Used ONCE for NCC->KCF\n'
+             'handoff. Too slow for\n'
+             'every frame.\n\n'
+             '(click to hand off to KCF)',
+             fontsize=10, color='lime', ha='center', va='center',
              fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='lime', lw=2, pad=15))
+             bbox=dict(fc='#111111', ec='lime', lw=2, pad=12))
     fig.canvas.draw()
     wait(fig, 'Step 4: NCC found target in Frame 2')
 
@@ -317,16 +366,26 @@ def main():
     ax_img.set_title('Switching to KCF Tracking...',
                      fontsize=20, fontweight='bold', color='yellow', pad=10)
 
-    fig.text(0.50, 0.5,
-             'NCC located the target.\n\n'
-             'Switching to KCF tracking...\n\n'
-             'KCF will track from the\n'
-             'NCC-found position in the\n'
-             'next frame WITHOUT NCC.\n\n'
-             '(click to continue)',
-             fontsize=18, color='yellow', ha='center', va='center',
+    fig.text(0.50, 0.50,
+             'Step 5 / 7  ─  NCC  -->  KCF  HANDOFF\n'
+             '══════════════════════════════════════════\n\n'
+             '  NCC (Normalised Cross-Correlation)\n'
+             '  Complexity : O(M*N * log(M*N))\n'
+             '  Searches   : entire M*N image\n'
+             '  Use case   : initial target acquisition\n\n'
+             '  KCF (Kernelised Correlation Filter)\n'
+             '  Complexity : O(N^2 * log(N^2))\n'
+             '  Searches   : fixed N x N local window\n'
+             '  Use case   : per-frame tracking (fast)\n\n'
+             '  NCC position passed to KCF as the\n'
+             '  initial window centre. From here,\n'
+             '  ONLY KCF runs — no more NCC.\n\n'
+             '  KCF runs in HARDWARE (FPGA) on the\n'
+             '  32x32 window received via AXI-Stream.\n\n'
+             '(click to see KCF track Frame 3)',
+             fontsize=13, color='yellow', ha='center', va='center',
              fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='yellow', lw=3, pad=25))
+             bbox=dict(fc='#111111', ec='yellow', lw=3, pad=22))
     fig.canvas.draw()
     wait(fig, 'Step 5: Switching to KCF tracking...')
 
@@ -353,10 +412,10 @@ def main():
     elif d3_r < 0: disp_dir.append(f'{d3_r:+d} px up')
     disp_str = ', '.join(disp_dir) if disp_dir else 'no displacement'
 
-    ax_img.set_title(f'Frame 3  (Frame 3 (shifted))  |  KCF ONLY  |  {disp_str}',
+    ax_img.set_title(f'Frame 3  (shifted +{sr}r,+{sc}c)  |  KCF ONLY  |  {disp_str}',
                      fontsize=14, fontweight='bold', color='yellow', pad=10)
 
-    # KCF response plot
+    # KCF response plot — smaller, leaving room for text panel
     ax_kcf.clear()
     ax_kcf.set_visible(True)
     ax_kcf.imshow(resp3_s, cmap='hot', interpolation='nearest', extent=ext)
@@ -369,20 +428,38 @@ def main():
                         arrowprops=dict(arrowstyle='->', color='cyan', lw=2.5))
         ax_kcf.text(d3_c + 1, d3_r - 1.5,
                     f'({d3_r:+d}, {d3_c:+d})',
-                    color='cyan', fontsize=13, fontweight='bold',
+                    color='cyan', fontsize=12, fontweight='bold',
                     bbox=dict(fc='black', alpha=0.7, pad=3))
 
-    ax_kcf.set_title(f'KCF Response  |  Peak at ({d3_r:+d}, {d3_c:+d})',
-                     fontsize=13, fontweight='bold', color='yellow', pad=8)
-    ax_kcf.set_xlabel('Col displacement', color='white')
-    ax_kcf.set_ylabel('Row displacement', color='white')
-    ax_kcf.tick_params(colors='white')
+    ax_kcf.set_title(f'KCF Response  peak=({d3_r:+d},{d3_c:+d})',
+                     fontsize=11, fontweight='bold', color='yellow', pad=6)
+    ax_kcf.set_xlabel('col displacement', color='white', fontsize=9)
+    ax_kcf.set_ylabel('row displacement', color='white', fontsize=9)
+    ax_kcf.tick_params(colors='white', labelsize=8)
     for spine in ax_kcf.spines.values():
         spine.set_edgecolor('white')
 
-    fig.text(0.80, 0.92,
-             f'Step 6 / {STEPS} — KCF only: {disp_str}  (click for summary)',
-             fontsize=11, color='gray', ha='center', va='center')
+    fig.text(0.895, 0.50,
+             'Step 6 / 7  ─  KCF TRACKING\n'
+             '──────────────────────────────\n'
+             'ALGORITHM (FPGA runs this):\n'
+             '  w = patch x Hann2D\n'
+             '  Z = FFT2(w)\n'
+             '  R = IFFT2(conj(X)*Z*a)\n'
+             '  peak(R) -> displacement\n\n'
+             'Window centred at NCC pos.\n'
+             'No full-image search needed.\n\n'
+             'RESULT:\n'
+             f'  KCF peak = ({d3_r:+d}, {d3_c:+d})\n'
+             f'  = {disp_str}\n'
+             f'  Tracked to ({c3_r}, {c3_c})\n\n'
+             'Hardware pipeline:\n'
+             '  Hann->FFT->cmul->IFFT\n'
+             '  ->peak_finder\n\n'
+             '(click for summary)',
+             fontsize=10, color='yellow', ha='center', va='center',
+             fontfamily='monospace',
+             bbox=dict(fc='#111111', ec='yellow', lw=2, pad=12))
     fig.canvas.draw()
     wait(fig, 'Step 6: KCF-only tracking on Frame 3')
 
@@ -395,16 +472,18 @@ def main():
     ax_kcf.clear(); ax_kcf.axis('off')
 
     # Side-by-side KCF responses
-    ax_r1 = fig.add_axes([0.03, 0.15, 0.28, 0.65])
+    ax_r1 = fig.add_axes([0.03, 0.15, 0.27, 0.65])
     ax_r1.imshow(resp1_s, cmap='hot', interpolation='nearest', extent=ext)
     ax_r1.plot(d1_c, d1_r, 'c*', ms=20, mec='white', mew=2)
     ax_r1.axhline(0, color='white', lw=0.5, alpha=0.3)
     ax_r1.axvline(0, color='white', lw=0.5, alpha=0.3)
-    ax_r1.set_title(f'Frame 1 KCF (train)\npeak = ({d1_r:+d}, {d1_c:+d})',
-                    fontsize=12, fontweight='bold', color='lime')
+    ax_r1.set_title(f'Frame 1  KCF (train)\npeak = ({d1_r:+d}, {d1_c:+d})',
+                    fontsize=11, fontweight='bold', color='lime')
     ax_r1.tick_params(colors='white', labelsize=8)
+    ax_r1.set_xlabel('col disp', color='white', fontsize=8)
+    ax_r1.set_ylabel('row disp', color='white', fontsize=8)
 
-    ax_r3 = fig.add_axes([0.35, 0.15, 0.28, 0.65])
+    ax_r3 = fig.add_axes([0.33, 0.15, 0.27, 0.65])
     ax_r3.imshow(resp3_s, cmap='hot', interpolation='nearest', extent=ext)
     ax_r3.plot(d3_c, d3_r, 'c*', ms=20, mec='white', mew=2)
     if d3_r != 0 or d3_c != 0:
@@ -412,31 +491,37 @@ def main():
                        arrowprops=dict(arrowstyle='->', color='cyan', lw=2))
     ax_r3.axhline(0, color='white', lw=0.5, alpha=0.3)
     ax_r3.axvline(0, color='white', lw=0.5, alpha=0.3)
-    ax_r3.set_title(f'Frame 3 KCF (track)\npeak = ({d3_r:+d}, {d3_c:+d})',
-                    fontsize=12, fontweight='bold', color='yellow')
+    ax_r3.set_title(f'Frame 3  KCF (track)\npeak = ({d3_r:+d}, {d3_c:+d})',
+                    fontsize=11, fontweight='bold', color='yellow')
     ax_r3.tick_params(colors='white', labelsize=8)
+    ax_r3.set_xlabel('col disp', color='white', fontsize=8)
+    ax_r3.set_ylabel('row disp', color='white', fontsize=8)
 
-    summary = (
-        f"FRAME 1 (Demo_test_1)\n"
-        f"  Target:    ({c1_r}, {c1_c})  [clicked]\n"
-        f"  KCF peak:  ({d1_r:+d}, {d1_c:+d})\n\n"
-        f"FRAME 2 (Demo_test_2)\n"
-        f"  NCC found: ({c2_r}, {c2_c})\n"
-        f"  NCC score: {ncc2_val:.3f}\n\n"
-        f"FRAME 3 (Frame 3 (shifted))\n"
-        f"  KCF ONLY (no NCC)\n"
-        f"  Window at: ({p3_r+half}, {p3_c+half})\n"
-        f"  KCF peak:  ({d3_r:+d}, {d3_c:+d})\n"
-        f"  Tracked to: ({c3_r}, {c3_c})"
-    )
-    fig.text(0.80, 0.50, summary, fontsize=12, color='white',
-             ha='center', va='center', fontfamily='monospace',
-             bbox=dict(fc='#1a1a1a', ec='white', lw=2, pad=20))
+    fig.text(0.795, 0.50,
+             'SUMMARY\n'
+             '══════════════════════════════\n\n'
+             'FRAME 1 (Demo_test_1)\n'
+             f'  Target:  ({c1_r}, {c1_c})  [clicked]\n'
+             f'  KCF:     peak ({d1_r:+d}, {d1_c:+d})\n\n'
+             'FRAME 2 (Demo_test_2)\n'
+             '  Method:  NCC full-image\n'
+             f'  Found:   ({c2_r}, {c2_c})\n'
+             f'  Score:   {ncc2_val:.4f}\n\n'
+             'FRAME 3 (shifted)\n'
+             '  Method:  KCF only (no NCC)\n'
+             f'  Disp:    ({d3_r:+d}, {d3_c:+d})\n'
+             f'  Tracked: ({c3_r}, {c3_c})\n\n'
+             'NCC located. KCF tracked.\n'
+             'FPGA runs KCF via AXI.\n'
+             '.mem files -> data/',
+             fontsize=10, color='white', ha='center', va='center',
+             fontfamily='monospace',
+             bbox=dict(fc='#111111', ec='white', lw=2, pad=16))
 
-    fig.text(0.50, 0.93,
-             f'NCC Detection + KCF Tracking Demo  |  '
-             f'KCF displacement: ({d3_r:+d}, {d3_c:+d})',
-             fontsize=15, fontweight='bold', color='white',
+    fig.text(0.32, 0.93,
+             f'NCC->KCF Tracking Demo  |  Frame2 NCC: ({c2_r},{c2_c})  |  '
+             f'Frame3 KCF: ({d3_r:+d},{d3_c:+d})',
+             fontsize=13, fontweight='bold', color='white',
              ha='center', va='center')
 
     fig.canvas.draw()

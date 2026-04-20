@@ -157,7 +157,6 @@ module fft2d_32 #(
                         buf_im[i * N + line_idx] <= fft_out_im[i];
                     end
                     if (line_idx == N - 1) begin
-                        state <= S_DONE;
                     end else begin
                         line_idx <= line_idx + 1;
                         state    <= S_COL_LOAD;
