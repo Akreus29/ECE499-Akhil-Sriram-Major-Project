@@ -1,30 +1,28 @@
 `timescale 1ns/1ps
-// twiddle_rom.v
-// Read-only memory of twiddle factors W_N^k = exp(-j2πk/N) for N=64.
-// Values stored as Q8.8 fixed-point pairs (real, imag).
-// Initialized from data/twiddle_64.mem at synthesis/simulation time.
+// twiddle_rom.sv
+// ROM of twiddle factors W_64^k = exp(-j2πk/64) for k = 0..31.
+// Interleaved format (same as twiddle_rom_32.sv):
+//   twiddle_64.mem line 2k = real part, line 2k+1 = imag part.
+// Q8.8 signed fixed-point. 64 entries total (32 complex pairs).
 
 module twiddle_rom #(
     parameter N          = 64,
     parameter DATA_WIDTH = 16,
     parameter FRAC       = 8
 )(
-    input  wire [$clog2(N/2)-1:0] addr,   // index k = 0 .. N/2-1
-    output reg  signed [DATA_WIDTH-1:0] w_re,
-    output reg  signed [DATA_WIDTH-1:0] w_im
+    input  wire [$clog2(N/2)-1:0]        addr,   // k = 0..31
+    output wire signed [DATA_WIDTH-1:0]  w_re,
+    output wire signed [DATA_WIDTH-1:0]  w_im
 );
 
-    reg signed [DATA_WIDTH-1:0] re_mem [0:N/2-1];
-    reg signed [DATA_WIDTH-1:0] im_mem [0:N/2-1];
+    // Flat interleaved array: 64 entries (32 pairs × 2)
+    reg signed [DATA_WIDTH-1:0] mem [0:N-1];
 
     initial begin
-        $readmemh("../data/twiddle_64.mem", re_mem);
-        // TODO: separate file for imag, or interleaved format
+        $readmemh("../data/twiddle_64.mem", mem);
     end
 
-    always @(*) begin
-        w_re = re_mem[addr];
-        w_im = im_mem[addr];
-    end
+    assign w_re = mem[{addr, 1'b0}];
+    assign w_im = mem[{addr, 1'b1}];
 
 endmodule
