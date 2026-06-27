@@ -1,701 +1,466 @@
 """
 make_presentation.py
-Generates a PowerPoint presentation for the KCF mid-semester demo.
-
-Prerequisites:
-  pip install python-pptx
-  python scripts/kcf_real_image.py data/Test_image1.png --row 240 --col 300 --presentation
-
-Usage:
-  python scripts/make_presentation.py
-
-Output:
-  docs/KCF_MidSemester_Presentation.pptx
+Generates docs/KCF_Final_Presentation.pptx
+Professional light theme — 16 slides
 """
 
-from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 import os
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
 
-# ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.join(SCRIPT_DIR, '..')
-FIG_DIR = os.path.join(ROOT_DIR, 'docs', 'MidTerm Report')
-EQ_DIR = os.path.join(FIG_DIR, 'equations')
-OUT_PATH = os.path.join(ROOT_DIR, 'docs', 'KCF_MidSemester_Presentation.pptx')
+ROOT_DIR   = os.path.join(SCRIPT_DIR, '..')
+IMG_DIR    = os.path.join(ROOT_DIR, 'docs', 'MidTerm Report')
+OUT_PATH   = os.path.join(ROOT_DIR, 'docs', 'KCF_Final_Presentation.pptx')
 
-# ── Colours ──────────────────────────────────────────────────────────────────
-BG_COLOR = RGBColor(0x1a, 0x1a, 0x2e)
-TITLE_COLOR = RGBColor(0x00, 0xd4, 0xaa)
-WHITE = RGBColor(0xff, 0xff, 0xff)
-LIGHT_GRAY = RGBColor(0xbb, 0xbb, 0xbb)
-RED = RGBColor(0xff, 0x44, 0x44)
-BLUE = RGBColor(0x44, 0x88, 0xff)
-GREEN = RGBColor(0x00, 0xff, 0x66)
-YELLOW = RGBColor(0xff, 0xdd, 0x44)
+# ── Colour palette ─────────────────────────────────────────────────────────────
+def col(h): return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
 
-# ── Slide dimensions (16:9) ──────────────────────────────────────────────────
-SLIDE_W = Inches(13.333)
-SLIDE_H = Inches(7.5)
+NAVY   = col('1B3A6B')
+BLUE   = col('2E75B6')
+DTEXT  = col('1A1A1A')
+WHITE  = col('FFFFFF')
+LGRAY  = col('F2F4F8')
+SILVER = col('D0D7E4')
+
+SW, SH = Inches(13.33), Inches(7.5)
 
 
-def fig(name):
-    """Return full path to a figure file."""
-    return os.path.join(FIG_DIR, name)
+# ── Low-level helpers ──────────────────────────────────────────────────────────
 
+def _run(para, text, size=18, bold=False, color=None, italic=False):
+    run = para.add_run()
+    run.text = text
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.italic = italic
+    run.font.color.rgb = color or DTEXT
+    return run
 
-def eq(name):
-    """Return full path to an equation image."""
-    return os.path.join(EQ_DIR, name)
-
-
-def set_bg(slide, color=BG_COLOR):
-    """Set slide background to solid colour."""
-    bg = slide.background
-    fill = bg.fill
-    fill.solid()
-    fill.fore_color.rgb = color
-
-
-def add_textbox(slide, left, top, width, height, text, font_size=20,
-                color=WHITE, bold=False, alignment=PP_ALIGN.LEFT):
-    """Add a simple text box to the slide."""
-    txBox = slide.shapes.add_textbox(left, top, width, height)
-    tf = txBox.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.text = text
-    p.font.size = Pt(font_size)
-    p.font.color.rgb = color
-    p.font.bold = bold
-    p.alignment = alignment
-    return txBox
-
-
-def add_bullet_slide(prs, title_text, bullets, image_path=None, sub_text=None):
-    """Create a slide with title, bullet points, and optional image on the right."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
-    set_bg(slide)
-
-    # Title
-    add_textbox(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.8),
-                title_text, font_size=32, color=TITLE_COLOR, bold=True)
-
-    # Underline bar
-    from pptx.shapes.autoshape import Shape
-    shape = slide.shapes.add_shape(
-        1, Inches(0.6), Inches(1.05), Inches(11.5), Pt(3))  # 1 = rectangle
+def _fill(shape, rgb):
     shape.fill.solid()
-    shape.fill.fore_color.rgb = TITLE_COLOR
-    shape.line.fill.background()
+    shape.fill.fore_color.rgb = rgb
 
-    # Determine text area width based on image presence
-    text_w = Inches(6.5) if image_path else Inches(11.5)
-    text_left = Inches(0.6)
-    top = Inches(1.3)
+def _border(shape, rgb, width_pt=1.0):
+    ln = shape.line
+    ln.color.rgb = rgb
+    ln.width = Pt(width_pt)
 
-    # Bullets
-    txBox = slide.shapes.add_textbox(text_left, top, text_w, Inches(5.5))
-    tf = txBox.text_frame
+def tb(slide, text, x, y, w, h,
+       size=18, bold=False, color=None, align=PP_ALIGN.LEFT,
+       fill=None, border=None, italic=False):
+    txb = slide.shapes.add_textbox(x, y, w, h)
+    tf  = txb.text_frame
     tf.word_wrap = True
-    for i, bullet in enumerate(bullets):
-        if i == 0:
-            p = tf.paragraphs[0]
+    para = tf.paragraphs[0]
+    para.alignment = align
+    _run(para, text, size=size, bold=bold, color=color or DTEXT, italic=italic)
+    if fill:  _fill(txb, fill)
+    if border: _border(txb, border)
+    return txb
+
+def hbar(slide, y, x=None, w=None, color=None, height=Inches(0.04)):
+    x = x if x is not None else Inches(0.3)
+    w = w or (SW - Inches(0.6))
+    bar = slide.shapes.add_shape(1, x, y, w, height)
+    _fill(bar, color or NAVY)
+    bar.line.fill.background()
+    return bar
+
+def pic(slide, fname, x, y, w, h):
+    path = os.path.join(IMG_DIR, fname) if not os.path.isabs(fname) else fname
+    if not os.path.exists(path):
+        p = slide.shapes.add_textbox(x, y, w, h).text_frame.paragraphs[0]
+        _run(p, f'[IMAGE: {os.path.basename(path)}]', size=10, color=col('CC0000'))
+        return None
+    return slide.shapes.add_picture(path, x, y, w, h)
+
+def bullets(slide, items, x, y, w, h, size=16, color=None, bullet='•', leading=4):
+    txb = slide.shapes.add_textbox(x, y, w, h)
+    tf  = txb.text_frame
+    tf.word_wrap = True
+    first = True
+    for item in items:
+        para = tf.paragraphs[0] if first else tf.add_paragraph()
+        para.space_before = Pt(leading)
+        if isinstance(item, tuple):
+            head, body = item
+            _run(para, f'{bullet} ', size=size, bold=True,  color=NAVY)
+            _run(para, head,          size=size, bold=True,  color=NAVY)
+            _run(para, f'  {body}',   size=size, bold=False, color=color or DTEXT)
         else:
-            p = tf.add_paragraph()
-        p.text = bullet
-        p.font.size = Pt(20)
-        p.font.color.rgb = WHITE
-        p.space_after = Pt(10)
-        p.level = 0
+            _run(para, f'{bullet}  {item}', size=size, color=color or DTEXT)
+        first = False
+    return txb
 
-    # Sub-text (e.g., equation caption)
-    if sub_text:
-        p = tf.add_paragraph()
-        p.text = sub_text
-        p.font.size = Pt(16)
-        p.font.color.rgb = LIGHT_GRAY
-        p.font.italic = True
-        p.space_before = Pt(14)
-
-    # Image on right side
-    if image_path and os.path.exists(image_path):
-        img_left = Inches(7.3)
-        img_top = Inches(1.3)
-        img_w = Inches(5.5)
-        slide.shapes.add_picture(image_path, img_left, img_top, width=img_w)
-
+def sec(prs, title):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = NAVY
+    bar = slide.shapes.add_shape(1, Inches(2.5), Inches(3.6), Inches(8.33), Inches(0.05))
+    _fill(bar, BLUE); bar.line.fill.background()
+    tb(slide, title, Inches(0.5), Inches(2.7), Inches(12.33), Inches(1.6),
+       size=40, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
     return slide
 
-
-def add_image_slide(prs, title_text, image_path, caption=None):
-    """Create a slide with a large centred image."""
+def white_slide(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(0.6), Inches(0.2), Inches(12), Inches(0.7),
-                title_text, font_size=30, color=TITLE_COLOR, bold=True)
-
-    if os.path.exists(image_path):
-        slide.shapes.add_picture(image_path, Inches(0.8), Inches(1.1),
-                                 width=Inches(11.5))
-
-    if caption:
-        add_textbox(slide, Inches(0.6), Inches(6.8), Inches(12), Inches(0.6),
-                    caption, font_size=16, color=LIGHT_GRAY,
-                    alignment=PP_ALIGN.CENTER)
-
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = WHITE
     return slide
 
-
-def add_two_image_slide(prs, title_text, img1_path, img2_path, cap1='', cap2=''):
-    """Slide with two images side by side."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(0.6), Inches(0.2), Inches(12), Inches(0.7),
-                title_text, font_size=30, color=TITLE_COLOR, bold=True)
-
-    if os.path.exists(img1_path):
-        slide.shapes.add_picture(img1_path, Inches(0.4), Inches(1.2), width=Inches(6.0))
-    if os.path.exists(img2_path):
-        slide.shapes.add_picture(img2_path, Inches(6.8), Inches(1.2), width=Inches(6.0))
-
-    if cap1:
-        add_textbox(slide, Inches(0.4), Inches(6.7), Inches(6), Inches(0.5),
-                    cap1, font_size=14, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-    if cap2:
-        add_textbox(slide, Inches(6.8), Inches(6.7), Inches(6), Inches(0.5),
-                    cap2, font_size=14, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-
-    return slide
-
-
-def add_table_slide(prs, title_text, headers, rows, col_widths=None):
-    """Create a slide with a styled table."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.7),
-                title_text, font_size=32, color=TITLE_COLOR, bold=True)
-
-    n_rows = len(rows) + 1
-    n_cols = len(headers)
-    tbl_left = Inches(0.8)
-    tbl_top = Inches(1.4)
-    tbl_w = Inches(11.5)
-    tbl_h = Inches(0.5) * n_rows
-
-    table_shape = slide.shapes.add_table(n_rows, n_cols, tbl_left, tbl_top, tbl_w, tbl_h)
-    table = table_shape.table
-
-    # Header row
-    for j, h in enumerate(headers):
-        cell = table.cell(0, j)
-        cell.text = h
-        for p in cell.text_frame.paragraphs:
-            p.font.size = Pt(18)
-            p.font.bold = True
-            p.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
-            p.alignment = PP_ALIGN.CENTER
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = TITLE_COLOR
-
-    # Data rows
-    for i, row in enumerate(rows):
-        for j, val in enumerate(row):
-            cell = table.cell(i + 1, j)
-            cell.text = val
-            for p in cell.text_frame.paragraphs:
-                p.font.size = Pt(16)
-                p.font.color.rgb = WHITE
-                p.alignment = PP_ALIGN.CENTER
-            cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(0x2a, 0x2a, 0x45) if i % 2 == 0 else RGBColor(0x22, 0x22, 0x3a)
-
-    return slide
-
-
-def add_equation_bullet_slide(prs, title_text, eq_path, bullets):
-    """Slide with equation image on top and bullets below."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.7),
-                title_text, font_size=32, color=TITLE_COLOR, bold=True)
-
-    # Equation image centred
-    if os.path.exists(eq_path):
-        slide.shapes.add_picture(eq_path, Inches(2.5), Inches(1.2), width=Inches(8))
-
-    # Bullets below
-    txBox = slide.shapes.add_textbox(Inches(0.8), Inches(3.0), Inches(11.5), Inches(4.0))
-    tf = txBox.text_frame
-    tf.word_wrap = True
-    for i, bullet in enumerate(bullets):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.text = bullet
-        p.font.size = Pt(20)
-        p.font.color.rgb = WHITE
-        p.space_after = Pt(8)
-
-    return slide
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SLIDE BUILDERS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_title_slide(prs):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(1), Inches(1.5), Inches(11), Inches(1.2),
-                'RTL Design of a KCF Visual Tracker',
-                font_size=44, color=TITLE_COLOR, bold=True,
-                alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(3.0), Inches(11), Inches(0.6),
-                'ECE499 Major Project — Mid-Semester Presentation',
-                font_size=24, color=WHITE, alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(4.0), Inches(11), Inches(0.5),
-                'Akhil Sriram',
-                font_size=28, color=WHITE, bold=True, alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(4.7), Inches(11), Inches(0.5),
-                'Supervisor: Dr. Venkatnarayan Hariharan',
-                font_size=20, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(5.3), Inches(11), Inches(0.5),
-                'Department of Electrical Engineering, Shiv Nadar University',
-                font_size=18, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(6.2), Inches(11), Inches(0.5),
-                'Spring 2026',
-                font_size=20, color=TITLE_COLOR, alignment=PP_ALIGN.CENTER)
-
-    # Logo if available
-    logo_path = fig('logo.jpg')
-    if os.path.exists(logo_path):
-        slide.shapes.add_picture(logo_path, Inches(5.5), Inches(5.8), width=Inches(2))
-
-
-def build_survey_slides(prs):
-    # Slide 2: The Visual Tracking Problem
-    add_bullet_slide(prs,
-        'The Visual Tracking Problem',
-        [
-            'Given: Frame 1 + bounding box around target',
-            'Goal: Find the same target in Frame 2, 3, 4, ...',
-            'Naive approach: Slide template across entire search area',
-            '    Complexity: O(N^4) — far too slow for real-time',
-            'Key insight: Use the FFT to test ALL shifts at once',
-            '    Frequency-domain correlation: O(N^2 log N)',
-            '    Enables real-time tracking at 100+ FPS',
-        ],
-        image_path=fig('graphic for explaining.png'))
-
-    # Slide 3: MOSSE Filter
-    add_equation_bullet_slide(prs,
-        'MOSSE: Minimum Output Sum of Squared Error',
-        eq('eq_mosse_filter.png'),
-        [
-            'Learn filter H* in the frequency domain from training frames',
-            'Detection: G = H* (element-wise) F — single FFT + multiply + IFFT',
-            'Achieves 600+ FPS on a single CPU core (Bolme et al., CVPR 2010)',
-            'Limitation: Operates on raw pixel intensities only',
-            'Cannot handle non-linear appearance changes (rotation, lighting)',
-            'Only captures linear correlations — low robustness to clutter',
-        ])
-
-    # Slide 4: KCF Tracker
-    add_bullet_slide(prs,
-        'KCF: Kernelized Correlation Filter',
-        [
-            'Extends MOSSE with the kernel trick (Henriques et al., 2015)',
-            'Maps patches into higher-dimensional feature space',
-            'Key insight: Kernel correlations of circulant data',
-            '    are still diagonalised by the DFT!',
-            'Linear kernel: equivalent to MOSSE, better regularised',
-            'Gaussian kernel: captures non-linear relationships,',
-            '    significantly improves robustness to appearance changes',
-            'Same O(N^2 log N) complexity as MOSSE',
-        ],
-        image_path=fig('KCF.png'))
-
-    # Slide 5: Comparison Table
-    add_table_slide(prs,
-        'MOSSE vs KCF: Why KCF Wins',
-        ['Property', 'MOSSE', 'KCF'],
-        [
-            ['Feature space', 'Raw pixels (linear)', 'Kernel-mapped (non-linear)'],
-            ['Core operation', 'H* . F', 'alpha . k^xz'],
-            ['Computational backbone', 'FFT / IFFT', 'FFT / IFFT'],
-            ['Training complexity', 'O(N^2 log N)', 'O(N^2 log N)'],
-            ['Robustness to clutter', 'Low', 'High'],
-            ['Non-linear appearance', 'No', 'Yes (Gaussian kernel)'],
-            ['OTB-2013 precision', '66.9%', '73.2%'],
-            ['Hardware cost', 'Low', 'Low (linear) / Moderate (Gaussian)'],
-        ])
-
-
-def build_theory_slides(prs):
-    # Slide 6: Circulant Matrices
-    add_equation_bullet_slide(prs,
-        'Circulant Matrices and the DFT',
-        eq('eq_circulant.png'),
-        [
-            'All cyclic shifts of a patch x form a circulant matrix C(x)',
-            'Circulant matrices are diagonalised by the DFT',
-            'Operations on ALL shifts become element-wise in frequency domain',
-            'This is why KCF can test every possible displacement in one pass',
-            'Complexity drops from O(N^4) spatial to O(N^2 log N) frequency',
-        ])
-
-    # Slide 7: Training
-    add_equation_bullet_slide(prs,
-        'Training: Learning the Filter',
-        eq('eq_alpha.png'),
-        [
-            'Given target patch x and desired Gaussian response y (sigma=2.0)',
-            'Linear kernel: K_hat = |X_hat|^2  (power spectrum)',
-            'Ridge regression in frequency domain gives alpha_hat',
-            'Lambda = 0.01 prevents division by zero, improves stability',
-            'Training is done OFFLINE in Python for this MVP',
-        ])
-
-    # Slide 8: Detection
-    add_equation_bullet_slide(prs,
-        'Detection: Locating the Target',
-        eq('eq_detect.png'),
-        [
-            'Given new search patch z from the next frame:',
-            '1. Apply Hann window to z, compute FFT(z)',
-            '2. Element-wise multiply: conj(X) * Z_hat * alpha_hat',
-            '3. Inverse FFT gives the response map (32x32 real values)',
-            '4. Peak of response = displacement of target between frames',
-            'Entire detection: one FFT + one multiply + one IFFT',
-        ])
-
-    # Slide 9: Combined Filter
-    add_equation_bullet_slide(prs,
-        'Combined Filter for Hardware',
-        eq('eq_combined.png'),
-        [
-            'Hardware multiplier computes: a * conj(b)',
-            'Store f_stored = conj(alpha) * X  in a single ROM',
-            'At detection: Z_hat * conj(f_stored) = conj(X) * Z * alpha',
-            'This IS the correct KCF detection equation!',
-            'Advantage: One ROM instead of two, no Verilog changes needed',
-        ])
-
-    # Slide 10: DFT Displacement
-    add_bullet_slide(prs,
-        'DFT Displacement Convention',
-        [
-            'Response map uses circular (DFT) indexing:',
-            '    Index 0, 1, 2, ...  = positive displacement',
-            '    Index 31, 30, 29, ... = negative displacement (-1, -2, -3, ...)',
-            '',
-            'Unwrapping rule (N=32):',
-            '    If peak < 16:  displacement = +peak',
-            '    If peak >= 16: displacement = peak - 32',
-            '',
-            'Example: peak at (29, 30)',
-            '    29 - 32 = -3 rows,  30 - 32 = -2 cols',
-            '    Target moved 3 pixels up, 2 pixels left',
-        ])
-
-    # Slide 11: Hann Window
-    add_image_slide(prs,
-        'The Hann Window: Preventing Spectral Leakage',
-        fig('fig_pres_hann_effect.png'),
-        'The Hann window smoothly tapers patch edges to zero, preventing sharp boundary artifacts in the FFT.')
-
-
-def build_hardware_slides(prs):
-    # Slide 12: Architecture Overview
-    add_bullet_slide(prs,
-        'Hardware Architecture Overview',
-        [
-            '7-stage Finite State Machine in kcf_detect_top.sv',
-            'Input: 32x32 patch (1024 pixels, Q8.8 fixed-point)',
-            'Output: (peak_row, peak_col) = target displacement',
-            '',
-            'Total latency: ~19,300 clock cycles',
-            'At 100 MHz: ~193 microseconds per detection',
-            'Throughput: ~5,200 detections/second',
-            '',
-            'All arithmetic in Q8.8 (16-bit signed, 8 fractional bits)',
-        ])
-
-    # Slide 13: Pipeline Stages
-    add_bullet_slide(prs,
-        'Pipeline Stages',
-        [
-            '1. S_HANN_WIN    (1024 cyc)  — Apply 2D Hann window',
-            '2. S_FFT_LOAD    (1024 cyc)  — Load windowed patch into FFT',
-            '3. S_FFT_RUN     (~5400 cyc) — 2D FFT (32 rows + 32 cols)',
-            '4. S_ELEM_MUL    (1024 cyc)  — Conjugate multiply with filter',
-            '5. S_IFFT_LOAD   (1024 cyc)  — Load product into IFFT',
-            '6. S_IFFT_RUN    (~6400 cyc) — 2D IFFT (conjugate trick)',
-            '7. S_PEAK_RUN    (1026 cyc)  — Scan response, find maximum',
-            '',
-            'Pipeline is fully sequential — one stage at a time',
-            'Each 1D FFT: 5 butterfly stages x 16 operations = 80 ops',
-        ])
-
-    # Slide 14: Q8.8 Fixed Point
-    add_bullet_slide(prs,
-        'Q8.8 Fixed-Point Representation',
-        [
-            '16-bit signed: 1 sign + 7 integer + 8 fractional bits',
-            'Range: -128.000 to +127.996',
-            'Resolution: 1/256 = 0.00390625',
-            '',
-            'THE PROBLEM:',
-            '  2D FFT scales by 1/N per pass = 1/N^2 = 1/1024 total',
-            '  Response values fall below smallest Q8.8 value!',
-            '  Everything rounds to zero',
-            '',
-            'This required a careful scaling solution...',
-        ])
-
-    # Slide 15: Asymmetric Scaling
-    add_bullet_slide(prs,
-        'The Scaling Solution',
-        [
-            'Asymmetric FFT Scaling:',
-            '  Forward FFT: scale row pass (1/N), skip column pass',
-            '  IFFT: full scaling on both passes for correct normalisation',
-            '  Net forward attenuation: 1/N (not 1/N^2)',
-            '',
-            'Adaptive Pre-Scaling:',
-            '  Multiply filter coefficients by K (largest power of 2',
-            '  such that max|filter * K| < 120)',
-            '  Synthetic data: K=64, Real image: K=2',
-            '',
-            'Final output = (K/N) x true_response',
-            '  Comfortably within Q8.8 dynamic range',
-        ])
-
-    # Slide 16: Building Blocks
-    add_bullet_slide(prs,
-        'Key RTL Building Blocks',
-        [
-            'Butterfly Unit (butterfly.sv):',
-            '  out_a = a + W*b,  out_b = a - W*b',
-            '  Single-cycle combinational, with scaled variant (>>1)',
-            '',
-            'Twiddle ROM (twiddle_rom_32.sv):',
-            '  16 complex values, symmetry: W^(k+N/2) = -W^k',
-            '',
-            '1D FFT (fft1d_32.sv): Radix-2 DIT, iterative single-butterfly',
-            '2D FFT (fft2d_32.sv): Row-column decomposition',
-            '2D IFFT (ifft2d_32.sv): Conjugate trick reuses FFT hardware',
-            '  IFFT(X) = conj(FFT(conj(X))) / N^2',
-            '',
-            'Peak Finder (peak_finder.sv): Sequential max scan, 1026 cycles',
-        ])
-
-
-def build_results_slides(prs):
-    # Slide 17: Target Selection
-    add_image_slide(prs,
-        'Real Image: Target Selection',
-        fig('fig_pres_frame1_context.png'),
-        'Test image: soccer ball on pavement (284x533). Target: textured ground at (240, 300).')
-
-    # Slide 18: Patch Comparison
-    add_image_slide(prs,
-        'Simulated Frame-to-Frame Motion',
-        fig('fig_pres_patch_comparison.png'),
-        'Search patch cropped 3 rows down, 2 cols right. Difference map highlights shifted content at edges.')
-
-    # Slide 19: Detection Result
-    add_image_slide(prs,
-        'Detection Result on Real Image',
-        fig('fig_pres_detection_result.png'),
-        'KCF correctly detects displacement (-3, -2) — matching the simulated 3-pixel shift.')
-
-    # Slide 20: Response Map (2D + 3D)
-    add_two_image_slide(prs,
-        'Response Map: Algorithm Confidence',
-        fig('fig_response_map.png'),
-        fig('fig_pres_response_3d.png'),
-        '2D heatmap (centred with fftshift)',
-        '3D surface — sharp peak at (-3, -2)')
-
-    # Slide 21: Pipeline demo
-    add_image_slide(prs,
-        'KCF Detection Pipeline: Input to Output',
-        fig('fig_pipeline_demo.png'),
-        '(a) Target patch  (b) Hann-windowed  (c) Search patch  (d) Response map with detected displacement')
-
-    # Slide 22: HW-SW Agreement
-    add_two_image_slide(prs,
-        'Hardware-Software Agreement',
-        fig('Output.png'),
-        fig('zoomed in.png'),
-        'Python golden reference: peak (29, 30) = displacement (-3, -2)',
-        'Vivado waveform: done pulse at ~193 us, matching peak coordinates')
-
-
-def build_future_slides(prs):
-    # Slide 23: Real vs Demo
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.8),
-                'Real Tracking System vs Our Demo',
-                font_size=32, color=TITLE_COLOR, bold=True)
-
-    # Left column: Real System
-    add_textbox(slide, Inches(0.6), Inches(1.3), Inches(5.5), Inches(0.5),
-                'Real Tracking System', font_size=24, color=RED, bold=True)
-    txL = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(5.5), Inches(4.5))
-    tf = txL.text_frame
-    tf.word_wrap = True
-    for b in ['Continuous video stream (30+ FPS)',
-              'Model updates every frame',
-              'Larger patches (64x64 or 128x128)',
-              'Gaussian kernel for robustness',
-              'AXI bus for pixel streaming',
-              'Handles occlusion, scale changes',
-              'Real-time closed-loop operation']:
-        p = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p.text = b
-        p.font.size = Pt(18)
-        p.font.color.rgb = WHITE
-        p.space_after = Pt(6)
-
-    # Right column: Our MVP
-    add_textbox(slide, Inches(7), Inches(1.3), Inches(5.5), Inches(0.5),
-                'Our Mid-Semester MVP', font_size=24, color=GREEN, bold=True)
-    txR = slide.shapes.add_textbox(Inches(7), Inches(1.9), Inches(5.5), Inches(4.5))
-    tf = txR.text_frame
-    tf.word_wrap = True
-    for b in ['Single image, simulated motion',
-              'Frozen offline-trained filter',
-              '32x32 patches',
-              'Linear kernel (simpler hardware)',
-              'Direct write port (no AXI)',
-              'Detection phase only',
-              '~193 us per detection at 100 MHz']:
-        p = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p.text = b
-        p.font.size = Pt(18)
-        p.font.color.rgb = WHITE
-        p.space_after = Pt(6)
-
-    # Divider line
-    shape = slide.shapes.add_shape(1, Inches(6.5), Inches(1.3), Pt(2), Inches(5))
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = LIGHT_GRAY
-    shape.line.fill.background()
-
-    # Slide 24: What We Achieved
-    add_bullet_slide(prs,
-        'What We Achieved',
-        [
-            'Complete 7-stage KCF detection pipeline in synthesisable SystemVerilog',
-            'Custom 2D FFT/IFFT using iterative single-butterfly architecture',
-            'Q8.8 fixed-point with asymmetric scaling — solved precision challenge',
-            'Correct combined-filter formulation for hardware efficiency',
-            'Python toolchain: training, data generation, golden reference',
-            'Real-image demonstration with exact HW-SW agreement',
-            '~19,300 cycles = 193 us per detection at 100 MHz',
-            'Verified in both Icarus Verilog and Xilinx Vivado 2024.2',
-        ])
-
-    # Slide 25: Future Work
-    add_bullet_slide(prs,
-        'Future Work Roadmap',
-        [
-            '1. FPGA Synthesis: Deploy on Xilinx Artix-7,',
-            '     evaluate timing, resource consumption, power',
-            '',
-            '2. Resolution Scaling: 64x64 patches',
-            '     (6th FFT stage, 4x memory buffers)',
-            '',
-            '3. Gaussian Kernel: Hardware exponential LUT',
-            '     for improved tracking robustness',
-            '',
-            '4. Online Model Update: Adapt filter to appearance',
-            '     changes in real-time (rotation, lighting)',
-            '',
-            '5. AXI4-Stream Interface: SoC integration with',
-            '     DMA pixel streaming from camera',
-        ])
-
-    # Slide 26: Thank You
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_bg(slide)
-
-    add_textbox(slide, Inches(1), Inches(2.5), Inches(11), Inches(1),
-                'Thank You',
-                font_size=52, color=TITLE_COLOR, bold=True,
-                alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(4.0), Inches(11), Inches(0.6),
-                'Questions?',
-                font_size=32, color=WHITE, alignment=PP_ALIGN.CENTER)
-
-    add_textbox(slide, Inches(1), Inches(5.5), Inches(11), Inches(0.5),
-                'Akhil Sriram  |  ECE499  |  Spring 2026  |  Shiv Nadar University',
-                font_size=18, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+def slide_header(slide, title, subtitle=None):
+    bar = slide.shapes.add_shape(1, Inches(0), Inches(0), SW, Inches(1.1))
+    _fill(bar, NAVY); bar.line.fill.background()
+    tb(slide, title, Inches(0.35), Inches(0.1), Inches(10.5), Inches(0.9),
+       size=26, bold=True, color=WHITE)
+    if subtitle:
+        tb(slide, subtitle, Inches(10.9), Inches(0.3), Inches(2.1), Inches(0.5),
+           size=13, color=col('A0BAD8'), align=PP_ALIGN.RIGHT)
+
+def card(slide, x, y, w, h, title, body_lines, title_size=15, body_size=13):
+    hd = slide.shapes.add_shape(1, x, y, w, Inches(0.42))
+    _fill(hd, NAVY); hd.line.fill.background()
+    tb(slide, title, x + Inches(0.12), y + Inches(0.05),
+       w - Inches(0.15), Inches(0.35), size=title_size, bold=True, color=WHITE)
+    bd = slide.shapes.add_shape(1, x, y + Inches(0.42), w, h - Inches(0.42))
+    _fill(bd, LGRAY); _border(bd, SILVER, 0.5)
+    txb = slide.shapes.add_textbox(x + Inches(0.12), y + Inches(0.5),
+                                   w - Inches(0.2), h - Inches(0.6))
+    tf = txb.text_frame; tf.word_wrap = True
+    first = True
+    for line in body_lines:
+        para = tf.paragraphs[0] if first else tf.add_paragraph()
+        para.space_before = Pt(2)
+        _run(para, f'•  {line}', size=body_size, color=DTEXT)
+        first = False
+
+def tbl(slide, headers, rows, x, y, w, h, hdr_fill=None, font_size=13):
+    nc = len(headers); nr = len(rows) + 1
+    cw = w / nc; rh = h / nr
+    hf = hdr_fill or NAVY
+    for ci, hdr in enumerate(headers):
+        cx = x + ci * cw
+        cell = slide.shapes.add_shape(1, cx, y, cw, rh)
+        _fill(cell, hf); _border(cell, WHITE, 0.5)
+        tb(slide, hdr, cx + Inches(0.05), y + Inches(0.04),
+           cw - Inches(0.1), rh - Inches(0.06),
+           size=font_size, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+    for ri, row in enumerate(rows):
+        ry = y + (ri + 1) * rh
+        fill = LGRAY if ri % 2 == 0 else WHITE
+        for ci, cell_text in enumerate(row):
+            cx = x + ci * cw
+            cell = slide.shapes.add_shape(1, cx, ry, cw, rh)
+            _fill(cell, fill); _border(cell, SILVER, 0.3)
+            tb(slide, cell_text, cx + Inches(0.06), ry + Inches(0.04),
+               cw - Inches(0.1), rh - Inches(0.06),
+               size=font_size - 1, bold=(ci == 0),
+               color=NAVY if ci == 0 else DTEXT,
+               align=PP_ALIGN.CENTER)
+
+
+# ── Slides ─────────────────────────────────────────────────────────────────────
+
+def slide_title(prs):
+    slide = white_slide(prs)
+    for bar_y in [Inches(0), Inches(7.32)]:
+        b = slide.shapes.add_shape(1, Inches(0), bar_y, SW, Inches(0.18))
+        _fill(b, NAVY); b.line.fill.background()
+    acc = slide.shapes.add_shape(1, Inches(0), Inches(0.18), Inches(0.18), Inches(7.14))
+    _fill(acc, BLUE); acc.line.fill.background()
+
+    tb(slide, 'RTL Implementation of the',
+       Inches(0.5), Inches(1.15), Inches(12.5), Inches(0.8),
+       size=34, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    tb(slide, 'KCF / MOSSE Visual Tracking Algorithm on FPGA',
+       Inches(0.5), Inches(1.88), Inches(12.5), Inches(0.9),
+       size=34, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    hbar(slide, Inches(2.93), x=Inches(1.5), w=Inches(10.33), color=BLUE, height=Inches(0.035))
+    tb(slide, 'Akhil Sriram  |  Roll No. 2210110134  |  B.Tech ECE',
+       Inches(0.5), Inches(3.1), Inches(12.5), Inches(0.5),
+       size=18, color=DTEXT, align=PP_ALIGN.CENTER)
+    tb(slide, 'Supervisor: Dr. Venkatnarayan Hariharan',
+       Inches(0.5), Inches(3.58), Inches(12.5), Inches(0.45),
+       size=16, color=col('555555'), align=PP_ALIGN.CENTER)
+    tb(slide, 'Department of Electrical Engineering  |  Shiv Nadar Institution of Eminence',
+       Inches(0.5), Inches(3.98), Inches(12.5), Inches(0.45),
+       size=14, color=col('666666'), align=PP_ALIGN.CENTER)
+    tb(slide, 'April 2026',
+       Inches(0.5), Inches(4.38), Inches(12.5), Inches(0.4),
+       size=13, italic=True, color=col('888888'), align=PP_ALIGN.CENTER)
+    logo = os.path.join(IMG_DIR, 'End_Term_Report_Template', 'logonew.jpg')
+    if os.path.exists(logo):
+        slide.shapes.add_picture(logo, Inches(5.16), Inches(5.05), Inches(3.0), Inches(1.65))
+    print('Slide  1: Title')
+
+
+def slide_outline(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Presentation Outline')
+    sections = [
+        ('1.  The Problem',
+         ['Why FPGA for tracking?', 'Frequency-domain insight', 'NCC / MOSSE / KCF comparison']),
+        ('2.  KCF Algorithm',
+         ['Hann window & Gaussian label', 'Training: alpha = Y/(|X|^2 + lambda)', 'Detection & response map']),
+        ('3.  Live Demo',
+         ['Frame 1 — target selection + training', 'Frame 2 — NCC full-image search', 'Frame 3 — KCF-only tracking']),
+        ('4.  Hardware & Integration',
+         ['7-stage RTL pipeline (~19,300 cycles)', 'AXI interface & processor integration', 'Future work']),
+    ]
+    xs = [Inches(0.3), Inches(6.85)]
+    ys = [Inches(1.25), Inches(4.1)]
+    for i, (sec_title, items) in enumerate(sections):
+        card(slide, xs[i % 2], ys[i // 2], Inches(6.18), Inches(2.6),
+             sec_title, items, title_size=16, body_size=14)
+    print('Slide  2: Outline')
+
+
+def slide_problem(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Why FPGA? The Frequency-Domain Insight')
+    bullets(slide, [
+        ('Challenge:',
+         'Real-time tracking on edge devices needs low latency and low power '
+         '— CPUs execute serially and are too slow for high-frame-rate video.'),
+        ('Key Insight:',
+         'KCF exploits that all cyclic shifts of a patch form a circulant matrix '
+         'diagonalised by the DFT — tracking reduces to element-wise division: '
+         'alpha = Y / (|X|^2 + lambda)'),
+        ('FPGA Advantage:',
+         'Dedicated parallel dataflow maps directly to the FFT butterfly pipeline. '
+         'Fixed-point arithmetic eliminates FPUs, cutting LUT usage significantly.'),
+    ], x=Inches(0.35), y=Inches(1.3), w=Inches(5.7), h=Inches(5.6), size=15, leading=14)
+    pic(slide, 'KCF.png',       Inches(6.2), Inches(1.2),  Inches(6.8), Inches(3.3))
+    pic(slide, 'fig_response_map.png', Inches(6.2), Inches(4.6), Inches(6.8), Inches(2.65))
+    print('Slide  4: Problem & Insight')
+
+
+def slide_algo_table(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Algorithm Survey: NCC vs MOSSE vs KCF')
+    headers = ['Property', 'NCC', 'MOSSE', 'KCF']
+    rows = [
+        ['Purpose',       'Target acquisition',  'Fast tracking',     'Robust per-frame tracking'],
+        ['Feature space', 'Raw pixels',           'Raw pixels',        'Kernel (linear / RBF)'],
+        ['Complexity',    'O(MN log MN)',         'O(N^2 log N)',      'O(N^2 log N)'],
+        ['Robustness',    'Low',                  'Medium',            'High'],
+        ['Update rule',   'None',                 'Online average',    'Learning rate eta'],
+        ['HW cost',       'Medium (1 FFT pair)',  'Low (2 FFT)',       'Medium (6 FFT)'],
+        ['This project',  'Frame 2 only',         'Algorithm basis',   'Frames 3+'],
+    ]
+    tbl(slide, headers, rows, x=Inches(0.35), y=Inches(1.25),
+        w=Inches(12.6), h=Inches(5.85), font_size=15)
+    print('Slide  5: Algorithm table')
+
+
+def slide_training(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'KCF Training: Hann Window & Gaussian Label')
+    pic(slide, 'fig_pres_hann_effect.png',    Inches(0.3), Inches(1.2),  Inches(5.9), Inches(2.9))
+    pic(slide, 'fig_pres_gaussian_label.png', Inches(0.3), Inches(4.2),  Inches(5.9), Inches(3.05))
+    eq = slide.shapes.add_shape(1, Inches(6.5), Inches(1.2), Inches(6.5), Inches(1.0))
+    _fill(eq, LGRAY); _border(eq, NAVY, 1.5)
+    tb(slide, 'alpha = Y  /  ( |X|^2  +  lambda )',
+       Inches(6.6), Inches(1.25), Inches(6.3), Inches(0.85),
+       size=24, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    bullets(slide, [
+        ('1.', 'Extract 32x32 patch x from Frame 1'),
+        ('2.', 'Apply Hann window:  x_w = x * w^2'),
+        ('3.', 'Compute FFT:  X = FFT2(x_w)'),
+        ('4.', 'Gaussian label:  Y = FFT2(y,  sigma=2.0)'),
+        ('5.', 'alpha = Y / (|X|^2 + lambda),  lambda=0.01'),
+        ('6.', 'Store alpha in ROM — computed once offline'),
+    ], x=Inches(6.5), y=Inches(2.38), w=Inches(6.5), h=Inches(4.8), size=15, leading=10, bullet='>')
+    print('Slide  7: Training')
+
+
+def slide_detection(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'KCF Detection: Response Map & Peak Finding')
+    eq = slide.shapes.add_shape(1, Inches(0.35), Inches(1.2), Inches(6.15), Inches(1.0))
+    _fill(eq, LGRAY); _border(eq, NAVY, 1.5)
+    tb(slide, 'R  =  IFFT2( conj(X) . Z . alpha )',
+       Inches(0.45), Inches(1.25), Inches(5.95), Inches(0.85),
+       size=22, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    bullets(slide, [
+        ('1.', 'Extract 32x32 patch z around last known position'),
+        ('2.', 'Apply Hann window:  z_w = z * w^2'),
+        ('3.', 'Compute FFT:  Z = FFT2(z_w)'),
+        ('4.', 'Correlate:  R_hat = conj(X) . Z . alpha  (element-wise)'),
+        ('5.', 'IFFT via conjugate trick:  R = IFFT2(R_hat)'),
+        ('6.', 'Peak of R gives displacement (d_row, d_col) -> new target position'),
+    ], x=Inches(0.35), y=Inches(2.38), w=Inches(6.15), h=Inches(4.8), size=15, leading=10, bullet='>')
+    pic(slide, 'fig_response_map.png',    Inches(6.65), Inches(1.2),  Inches(6.4), Inches(3.2))
+    pic(slide, 'fig_pres_response_3d.png',Inches(6.65), Inches(4.5),  Inches(6.4), Inches(2.75))
+    print('Slide  8: Detection')
+
+
+def slide_demo_frame1(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Frame 1 — Target Selection & KCF Training', subtitle='Step 1-2 / 7')
+    pic(slide, 'demo_s1_select.png',  Inches(0.25), Inches(1.2), Inches(6.45), Inches(5.85))
+    pic(slide, 'demo_s2_trained.png', Inches(6.85), Inches(1.2), Inches(6.2),  Inches(5.85))
+    cap = slide.shapes.add_shape(1, Inches(0.25), Inches(7.1), Inches(12.8), Inches(0.26))
+    _fill(cap, LGRAY); _border(cap, SILVER, 0.3)
+    tb(slide, 'User clicks to select a 32x32 target patch  ->  KCF filter alpha computed offline and stored in ROM',
+       Inches(0.4), Inches(7.11), Inches(12.5), Inches(0.26),
+       size=12, color=col('444444'), align=PP_ALIGN.CENTER)
+    print('Slide 10: Demo Frame 1')
+
+
+def slide_demo_frame2(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Frame 2 — NCC Full-Image Search', subtitle='Step 4 / 7')
+    pic(slide, 'demo_s3_ncc.png', Inches(0.25), Inches(1.2), Inches(12.8), Inches(5.55))
+    cap = slide.shapes.add_shape(1, Inches(0.25), Inches(6.85), Inches(12.8), Inches(0.42))
+    _fill(cap, LGRAY); _border(cap, SILVER, 0.3)
+    tb(slide,
+       'NCC score = 1.000  |  Target found at (146, 853)  |  '
+       'NCC used ONCE for initial acquisition — too slow for every frame',
+       Inches(0.4), Inches(6.88), Inches(12.5), Inches(0.4),
+       size=13, color=col('333333'), align=PP_ALIGN.CENTER)
+    print('Slide 11: Demo Frame 2')
+
+
+def slide_demo_frame3(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'NCC -> KCF Handoff & Frame 3 Tracking', subtitle='Steps 5-6 / 7')
+    pic(slide, 'demo_s4_handoff.png', Inches(0.25), Inches(1.2),  Inches(12.8), Inches(2.55))
+    pic(slide, 'demo_s5_kcf.png',     Inches(0.25), Inches(3.88), Inches(12.8), Inches(3.38))
+    print('Slide 12: Demo Frame 3 & Handoff')
+
+
+def slide_results(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Results Summary', subtitle='Response maps + hardware simulation')
+    pic(slide, 'demo_s6_summary.png', Inches(0.25), Inches(1.2), Inches(7.85), Inches(5.85))
+    pic(slide, 'waveform.png',         Inches(8.3),  Inches(1.2), Inches(4.75), Inches(2.75))
+    stats = slide.shapes.add_shape(1, Inches(8.3), Inches(4.1), Inches(4.75), Inches(2.9))
+    _fill(stats, LGRAY); _border(stats, NAVY, 1.2)
+    tb(slide, 'Hardware Simulation',
+       Inches(8.42), Inches(4.18), Inches(4.5), Inches(0.38),
+       size=14, bold=True, color=NAVY)
+    bullets(slide, [
+        'done pulse confirmed in Vivado',
+        '~19,300 cycles = 193 us @ 100 MHz',
+        'peak_row / peak_col match Python ref',
+        'Hardware-software agreement verified',
+    ], x=Inches(8.42), y=Inches(4.58), w=Inches(4.5), h=Inches(2.3),
+       size=13, color=DTEXT, leading=5, bullet='v')
+    print('Slide 13: Results')
+
+
+def slide_hardware(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'RTL Pipeline & Processor Integration')
+    tb(slide, '7-Stage Detection Pipeline',
+       Inches(0.35), Inches(1.2), Inches(6.1), Inches(0.42),
+       size=17, bold=True, color=NAVY)
+    tbl(slide,
+        ['Stage', 'Cycles', 'Operation'],
+        [['S_HANN_WIN',  '1,024',   'Hann window multiply'],
+         ['S_FFT_RUN',   '~5,600',  '2D-FFT (32 row + 32 col)'],
+         ['S_ELEM_MUL',  '1,024',   'conj(X).Z.alpha element-wise'],
+         ['S_IFFT_RUN',  '~5,600',  '2D-IFFT (conjugate trick)'],
+         ['S_PEAK_RUN',  '1,024',   'Scan for response peak'],
+         ['TOTAL',       '~19,300', '~193 us @ 100 MHz']],
+        x=Inches(0.35), y=Inches(1.68), w=Inches(6.1), h=Inches(4.6), font_size=13)
+
+    tb(slide, 'AXI Interface — Processor Integration',
+       Inches(6.75), Inches(1.2), Inches(6.2), Inches(0.42),
+       size=17, bold=True, color=NAVY)
+    tbl(slide,
+        ['Offset', 'Register', 'Access'],
+        [['0x00', 'CTRL',         'W — trigger start'],
+         ['0x04', 'THRESHOLD',    'R/W — confidence level'],
+         ['0x08', 'PEAK_ROW',     'R — row index (0-31)'],
+         ['0x0C', 'PEAK_COL',     'R — col index (0-31)'],
+         ['0x10', 'PEAK_VAL',     'R — response magnitude'],
+         ['0x14', 'TARGET_FOUND', 'R — valid detection bit']],
+        x=Inches(6.75), y=Inches(1.68), w=Inches(6.2), h=Inches(3.38), font_size=12)
+
+    ib = slide.shapes.add_shape(1, Inches(6.75), Inches(5.15), Inches(6.2), Inches(1.12))
+    _fill(ib, LGRAY); _border(ib, NAVY, 1.0)
+    tb(slide,
+       'AXI4-Stream: 1024 x 16-bit pixel stream  (tready / tvalid / tlast)\n'
+       'AXI4-Lite: control + result registers\n'
+       'Integration with processor via AXI interconnect',
+       Inches(6.87), Inches(5.2), Inches(5.96), Inches(1.05), size=13, color=DTEXT)
+    print('Slide 15: Hardware & Integration')
+
+
+def slide_future(prs):
+    slide = white_slide(prs)
+    slide_header(slide, 'Future Work & Thank You')
+    tb(slide, 'Future Work',
+       Inches(0.35), Inches(1.2), Inches(6.0), Inches(0.42),
+       size=20, bold=True, color=NAVY)
+    items = [
+        ('FPGA Synthesis',    'Artix-7 LUT/FF/BRAM utilisation + timing closure at 100 MHz'),
+        ('64x64 Resolution',  '6-stage FFT for higher accuracy on larger targets'),
+        ('Gaussian Kernel',   'Hardware exponential LUT for RBF kernel — improves robustness'),
+        ('Online Update',     'Adaptive filter: alpha_new = (1-eta)*alpha_old + eta*alpha_frame'),
+        ('Camera Pipeline',   'MIPI CSI-2 / OV7670 input + HDMI output on Nexys A7'),
+    ]
+    for i, (head, body) in enumerate(items):
+        y = Inches(1.78) + i * Inches(1.0)
+        fc = slide.shapes.add_shape(1, Inches(0.35), y, Inches(6.05), Inches(0.88))
+        _fill(fc, LGRAY); _border(fc, BLUE, 0.7)
+        tb(slide, f'>  {head}', Inches(0.5), y + Inches(0.04), Inches(5.75), Inches(0.34),
+           size=14, bold=True, color=NAVY)
+        tb(slide, body, Inches(0.5), y + Inches(0.42), Inches(5.75), Inches(0.42),
+           size=12, color=DTEXT)
+
+    ty = slide.shapes.add_shape(1, Inches(6.72), Inches(1.2), Inches(6.28), Inches(5.2))
+    _fill(ty, NAVY); ty.line.fill.background()
+    tb(slide, 'Thank You',
+       Inches(6.82), Inches(2.1), Inches(6.08), Inches(1.0),
+       size=40, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+    tb(slide, 'Questions?',
+       Inches(6.82), Inches(3.08), Inches(6.08), Inches(0.65),
+       size=26, color=col('A0BAD8'), align=PP_ALIGN.CENTER)
+    hbar(slide, Inches(3.83), x=Inches(7.3), w=Inches(5.1), color=BLUE, height=Inches(0.03))
+    tb(slide, 'Akhil Sriram  |  2210110134',
+       Inches(6.82), Inches(3.95), Inches(6.08), Inches(0.4),
+       size=14, color=WHITE, align=PP_ALIGN.CENTER)
+    tb(slide, 'Dr. Venkatnarayan Hariharan',
+       Inches(6.82), Inches(4.35), Inches(6.08), Inches(0.38),
+       size=13, color=col('A0BAD8'), align=PP_ALIGN.CENTER)
+    tb(slide, 'Shiv Nadar Institution of Eminence',
+       Inches(6.82), Inches(4.73), Inches(6.08), Inches(0.35),
+       size=12, color=col('8090B0'), align=PP_ALIGN.CENTER)
+    print('Slide 16: Future Work & Thank You')
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    # Check for required figures
-    required = [
-        'fig_pres_frame1_context.png', 'fig_pres_detection_result.png',
-        'fig_pres_patch_comparison.png', 'fig_pres_response_3d.png',
-        'fig_pres_hann_effect.png', 'fig_pres_gaussian_label.png',
-        'fig_response_map.png', 'fig_pipeline_demo.png',
-    ]
-    missing = [f for f in required if not os.path.exists(fig(f))]
-    if missing:
-        print('WARNING: Missing figures (run kcf_real_image.py --presentation first):')
-        for f in missing:
-            print(f'  {f}')
-        print('Continuing anyway — missing images will be skipped.\n')
-
     prs = Presentation()
-    prs.slide_width = SLIDE_W
-    prs.slide_height = SLIDE_H
+    prs.slide_width  = SW
+    prs.slide_height = SH
 
-    print('Building presentation...')
+    slide_title(prs)                                    #  1
+    slide_outline(prs)                                  #  2
+    sec(prs, 'The Visual Tracking Problem')             #  3
+    slide_problem(prs)                                  #  4
+    slide_algo_table(prs)                               #  5
+    sec(prs, 'KCF Algorithm')                           #  6
+    slide_training(prs)                                 #  7
+    slide_detection(prs)                                #  8
+    sec(prs, 'Live Demo: NCC to KCF Tracking Pipeline') #  9
+    slide_demo_frame1(prs)                              # 10
+    slide_demo_frame2(prs)                              # 11
+    slide_demo_frame3(prs)                              # 12
+    slide_results(prs)                                  # 13
+    sec(prs, 'RTL Hardware & Integration')              # 14
+    slide_hardware(prs)                                 # 15
+    slide_future(prs)                                   # 16
 
-    build_title_slide(prs)
-    print('  Section 0: Title slide')
-
-    build_survey_slides(prs)
-    print('  Section 1: Survey (4 slides)')
-
-    build_theory_slides(prs)
-    print('  Section 2: KCF Theory (6 slides)')
-
-    build_hardware_slides(prs)
-    print('  Section 3: Hardware Pipeline (5 slides)')
-
-    build_results_slides(prs)
-    print('  Section 4: Real Image Demo (6 slides)')
-
-    build_future_slides(prs)
-    print('  Section 5: Future Work (4 slides)')
-
-    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     prs.save(OUT_PATH)
-    print(f'\nSaved: {OUT_PATH}')
-    print(f'Total slides: {len(prs.slides)}')
+    print(f'\nSaved: {OUT_PATH}  ({len(prs.slides)} slides)')
 
 
 if __name__ == '__main__':

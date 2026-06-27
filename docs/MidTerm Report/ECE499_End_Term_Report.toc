@@ -1,0 +1,35 @@
+\contentsline {chapter}{\numberline {1}Introduction}{9}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Background and Motivation}{9}{section.1.1}%
+\contentsline {section}{\numberline {1.2}The KCF Approach}{9}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Project Scope}{10}{section.1.3}%
+\contentsline {chapter}{\numberline {2}Literature Survey}{11}{chapter.2}%
+\contentsline {section}{\numberline {2.1}MOSSE Filter --- Bolme et al., 2010}{11}{section.2.1}%
+\contentsline {section}{\numberline {2.2}KCF Tracker --- Henriques et al., 2015}{11}{section.2.2}%
+\contentsline {section}{\numberline {2.3}Normalised Cross-Correlation (NCC) for Target Acquisition}{12}{section.2.3}%
+\contentsline {section}{\numberline {2.4}Hardware FFT --- Cooley-Tukey Radix-2 DIT}{12}{section.2.4}%
+\contentsline {section}{\numberline {2.5}Algorithm Comparison}{12}{section.2.5}%
+\contentsline {chapter}{\numberline {3}Research and Implementation}{14}{chapter.3}%
+\contentsline {section}{\numberline {3.1}KCF Algorithm Implementation}{14}{section.3.1}%
+\contentsline {subsection}{\numberline {3.1.1}Training Phase}{14}{subsection.3.1.1}%
+\contentsline {subsection}{\numberline {3.1.2}Detection Phase}{15}{subsection.3.1.2}%
+\contentsline {section}{\numberline {3.2}NCC -- KCF Three-Frame Demo Pipeline}{15}{section.3.2}%
+\contentsline {section}{\numberline {3.3}RTL Hardware Architecture}{16}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}Top-Level FSM: \texttt {kcf\_detect\_top.sv}}{16}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Building Blocks}{17}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}2D-FFT Implementation}{18}{subsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.3.4}IFFT via Conjugate Trick}{18}{subsection.3.3.4}%
+\contentsline {section}{\numberline {3.4}Q8.8 Fixed-Point Arithmetic and Scaling}{18}{section.3.4}%
+\contentsline {subsection}{\numberline {3.4.1}Fixed-Point Format}{18}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.2}Precision Problem with Naive Two-Pass Scaling}{18}{subsection.3.4.2}%
+\contentsline {subsection}{\numberline {3.4.3}Scaling Solution: Asymmetric FFT and Adaptive Pre-scaling}{18}{subsection.3.4.3}%
+\contentsline {section}{\numberline {3.5}AXI Interface Design}{19}{section.3.5}%
+\contentsline {subsection}{\numberline {3.5.1}Overview}{19}{subsection.3.5.1}%
+\contentsline {subsection}{\numberline {3.5.2}AXI4-Lite Register Map}{19}{subsection.3.5.2}%
+\contentsline {subsection}{\numberline {3.5.3}SoC Integration Protocol}{20}{subsection.3.5.3}%
+\contentsline {section}{\numberline {3.6}Software Toolchain}{20}{section.3.6}%
+\contentsline {section}{\numberline {3.7}Verification and Results}{21}{section.3.7}%
+\contentsline {subsection}{\numberline {3.7.1}RTL Simulation}{21}{subsection.3.7.1}%
+\contentsline {subsection}{\numberline {3.7.2}Hardware--Software Agreement}{21}{subsection.3.7.2}%
+\contentsline {chapter}{\numberline {4}Conclusion}{23}{chapter.4}%
+\contentsline {chapter}{\numberline {5}Future Prospects}{24}{chapter.5}%
+\contentsline {section}{References}{25}{section*.14}%

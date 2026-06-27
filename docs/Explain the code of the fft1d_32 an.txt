@@ -1,0 +1,1 @@
+Explain the code of the fft1d_32 and fft2d_32. I want to know why it was implemented like that in rtl. 
