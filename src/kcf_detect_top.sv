@@ -24,10 +24,13 @@ module kcf_detect_top #(
     input  wire [$clog2(N*N)-1:0]         patch_addr,
     input  wire signed [DATA_WIDTH-1:0]   patch_data,
     input  wire                           patch_wr_en,
+    // Confidence threshold (set before start; static during detection)
+    input  wire signed [DATA_WIDTH-1:0]   conf_threshold,
     // Detection output
     output reg  [$clog2(N)-1:0]           peak_row,
     output reg  [$clog2(N)-1:0]           peak_col,
     output reg  signed [DATA_WIDTH-1:0]   peak_val,
+    output reg                            target_found,
     output reg                            done
 );
 
@@ -170,8 +173,9 @@ module kcf_detect_top #(
             fft_start  <= 0;
             ifft_wr_en <= 0;
             ifft_start <= 0;
-            pk_start   <= 0;
-            done       <= 0;
+            pk_start     <= 0;
+            target_found <= 0;
+            done         <= 0;
         end else begin
             // Defaults
             fft_wr_en  <= 0;
@@ -296,8 +300,9 @@ module kcf_detect_top #(
                 end
 
                 S_DONE: begin
-                    done  <= 1;
-                    state <= S_IDLE;
+                    done         <= 1;
+                    target_found <= ($signed(peak_val) > $signed(conf_threshold));
+                    state        <= S_IDLE;
                 end
 
             endcase

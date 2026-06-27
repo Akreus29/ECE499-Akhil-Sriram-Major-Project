@@ -20,7 +20,8 @@ Usage:
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, FancyArrowPatch
+from mpl_toolkits.mplot3d import Axes3D
 import argparse
 import os
 import sys
@@ -317,6 +318,269 @@ def generate_figures(frame1, frame2, target_r0, target_c0,
     print('  Saved fig_pipeline_demo.png')
 
 
+# ── Presentation Figure Generation ───────────────────────────────────────────
+
+def render_equation(latex_str, filename, fontsize=28):
+    """Render a LaTeX equation to a transparent PNG for use in slides."""
+    fig, ax = plt.subplots(figsize=(10, 1.8))
+    ax.text(0.5, 0.5, f'${latex_str}$', fontsize=fontsize,
+            ha='center', va='center', transform=ax.transAxes,
+            color='white')
+    ax.set_facecolor('none')
+    fig.patch.set_alpha(0.0)
+    ax.axis('off')
+    fig.savefig(os.path.join(FIG_DIR, filename),
+                dpi=200, bbox_inches='tight', transparent=True)
+    plt.close(fig)
+
+
+def generate_presentation_figures(full_image, frame1, frame2,
+                                   target_row, target_col,
+                                   t_r0, t_c0, s_r0, s_c0,
+                                   target_patch, search_patch,
+                                   windowed_target, windowed_search,
+                                   response, peak_row, peak_col,
+                                   hann_1d, shift_row, shift_col):
+    """Generate high-impact figures for the PowerPoint presentation."""
+    matplotlib.use('Agg')
+    os.makedirs(FIG_DIR, exist_ok=True)
+
+    dy = peak_row if peak_row < N // 2 else peak_row - N
+    dx = peak_col if peak_col < N // 2 else peak_col - N
+
+    # ── Fig 1: Target selection with zoomed inset ──
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.imshow(full_image, cmap='gray', vmin=0, vmax=1)
+    rect = Rectangle((t_c0, t_r0), N, N, lw=2.5, edgecolor='red', facecolor='none')
+    ax.add_patch(rect)
+    ax.set_title('Frame 1 — Target Selection', fontsize=16, fontweight='bold')
+    ax.axis('off')
+    # Zoomed inset in upper-right
+    axins = fig.add_axes([0.62, 0.52, 0.35, 0.42])
+    axins.imshow(target_patch, cmap='gray', interpolation='nearest', vmin=0, vmax=1)
+    axins.set_title('32x32 Target (zoomed)', fontsize=11, color='red', fontweight='bold')
+    for spine in axins.spines.values():
+        spine.set_edgecolor('red')
+        spine.set_linewidth(2.5)
+    axins.set_xticks([])
+    axins.set_yticks([])
+    # Connector lines
+    box_r_center = t_r0 + N // 2
+    box_c_right = t_c0 + N
+    ax.annotate('', xy=(0.61, 0.92), xytext=(box_c_right / full_image.shape[1], 1.0 - box_r_center / full_image.shape[0]),
+                xycoords='figure fraction', textcoords='axes fraction',
+                arrowprops=dict(arrowstyle='-', color='red', lw=1.5, ls='--'))
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_frame1_context.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_frame1_context.png')
+
+    # ── Fig 2: Detection result with both boxes + arrow ──
+    fig = plt.figure(figsize=(14, 8))
+    # Main image panel
+    ax_main = fig.add_axes([0.02, 0.0, 0.60, 0.88])
+    ax_main.imshow(full_image, cmap='gray', vmin=0, vmax=1)
+    # Dashed red box = original target
+    rect1 = Rectangle((t_c0, t_r0), N, N, lw=2, edgecolor='red',
+                       facecolor='none', linestyle='--', label='Target (Frame 1)')
+    ax_main.add_patch(rect1)
+    # Solid blue box = search region
+    rect2 = Rectangle((s_c0, s_r0), N, N, lw=2, edgecolor='#4488ff',
+                       facecolor='none', label='Search (Frame 2)')
+    ax_main.add_patch(rect2)
+    # Detected position star
+    det_r = s_r0 + N // 2 + dy
+    det_c = s_c0 + N // 2 + dx
+    ax_main.plot(det_c, det_r, '*', color='lime', markersize=20,
+                 markeredgecolor='white', markeredgewidth=1, label=f'Detected ({dy},{dx})')
+    # Arrow from search centre to detected position
+    search_cr = s_r0 + N // 2
+    search_cc = s_c0 + N // 2
+    ax_main.annotate('', xy=(det_c, det_r), xytext=(search_cc, search_cr),
+                     arrowprops=dict(arrowstyle='->', color='lime', lw=3))
+    ax_main.legend(loc='upper left', fontsize=10, framealpha=0.8)
+    ax_main.set_title('Detection Result', fontsize=16, fontweight='bold')
+    ax_main.axis('off')
+    # Text annotation
+    ax_main.text(0.5, -0.04, f'Displacement: ({dy}, {dx}) pixels',
+                 transform=ax_main.transAxes, ha='center', fontsize=14,
+                 fontweight='bold', color='lime',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
+
+    # Right side: zoomed insets
+    ax_t = fig.add_axes([0.65, 0.50, 0.32, 0.42])
+    ax_t.imshow(target_patch, cmap='gray', interpolation='nearest', vmin=0, vmax=1)
+    ax_t.set_title('Target Patch', fontsize=11, color='red', fontweight='bold')
+    for spine in ax_t.spines.values():
+        spine.set_edgecolor('red')
+        spine.set_linewidth(2)
+    ax_t.set_xticks([])
+    ax_t.set_yticks([])
+
+    ax_s = fig.add_axes([0.65, 0.03, 0.32, 0.42])
+    ax_s.imshow(search_patch, cmap='gray', interpolation='nearest', vmin=0, vmax=1)
+    ax_s.set_title('Search Patch', fontsize=11, color='#4488ff', fontweight='bold')
+    for spine in ax_s.spines.values():
+        spine.set_edgecolor('#4488ff')
+        spine.set_linewidth(2)
+    ax_s.set_xticks([])
+    ax_s.set_yticks([])
+    # Arrow on search patch showing displacement
+    ax_s.annotate('', xy=(N // 2 + dx, N // 2 + dy), xytext=(N // 2, N // 2),
+                  arrowprops=dict(arrowstyle='->', color='lime', lw=2.5))
+    ax_s.plot(N // 2, N // 2, '+', color='white', markersize=12, markeredgewidth=2)
+
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_detection_result.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_detection_result.png')
+
+    # ── Fig 3: Side-by-side patch comparison with pixel grid ──
+    diff = np.abs(target_patch - search_patch)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    titles = ['Target Patch (Frame 1)', 'Search Patch (Frame 2)', '|Difference|']
+    data = [target_patch, search_patch, diff]
+    colors = ['red', '#4488ff', 'lime']
+    cmaps = ['gray', 'gray', 'hot']
+
+    for i, (ax, d, t, c, cm) in enumerate(zip(axes, data, titles, colors, cmaps)):
+        ax.imshow(d, cmap=cm, interpolation='nearest', vmin=0,
+                  vmax=1 if i < 2 else diff.max())
+        ax.set_title(t, fontsize=13, color=c, fontweight='bold')
+        # Pixel grid
+        for x in range(N + 1):
+            ax.axhline(x - 0.5, color='gray', lw=0.3, alpha=0.5)
+            ax.axvline(x - 0.5, color='gray', lw=0.3, alpha=0.5)
+        # Crosshair at centre
+        ax.plot(N // 2, N // 2, '+', color='white', markersize=10, markeredgewidth=1.5)
+        if i == 1:
+            # Arrow showing displacement on search patch
+            ax.annotate('', xy=(N // 2 + dx, N // 2 + dy),
+                        xytext=(N // 2, N // 2),
+                        arrowprops=dict(arrowstyle='->', color='lime', lw=2.5))
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_edgecolor(c)
+            spine.set_linewidth(2)
+
+    fig.suptitle(f'Pixel-Level Comparison — shift ({shift_row},{shift_col}), '
+                 f'detected displacement ({dy},{dx})',
+                 fontsize=14, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_patch_comparison.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_patch_comparison.png')
+
+    # ── Fig 4: 3D response surface ──
+    response_shifted = np.fft.fftshift(response)
+    fig = plt.figure(figsize=(10, 7))
+    ax3 = fig.add_subplot(111, projection='3d')
+    rows = np.arange(N) - N // 2
+    cols = np.arange(N) - N // 2
+    C, R = np.meshgrid(cols, rows)
+    ax3.plot_surface(C, R, response_shifted, cmap='hot', edgecolor='none', alpha=0.9)
+    # Mark peak
+    ax3.scatter([dx], [dy], [response_shifted[N // 2 + dy, N // 2 + dx]],
+                color='cyan', s=200, marker='*', zorder=5, edgecolors='white', linewidths=1)
+    # Vertical line at peak
+    peak_z = response_shifted[N // 2 + dy, N // 2 + dx]
+    ax3.plot([dx, dx], [dy, dy], [0, peak_z], color='cyan', lw=2, ls='--')
+    ax3.set_xlabel('Column displacement', fontsize=11)
+    ax3.set_ylabel('Row displacement', fontsize=11)
+    ax3.set_zlabel('Response', fontsize=11)
+    ax3.set_title(f'3D Detection Response — Peak at ({dy}, {dx})',
+                  fontsize=14, fontweight='bold')
+    ax3.view_init(elev=35, azim=-50)
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_response_3d.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_response_3d.png')
+
+    # ── Fig 5: Hann window effect ──
+    hann_2d = np.outer(hann_1d, hann_1d)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+
+    axes[0, 0].plot(hann_1d, color='cyan', lw=2)
+    axes[0, 0].set_title('(a) 1D Hann Window (N=32)', fontsize=12, fontweight='bold')
+    axes[0, 0].set_xlabel('Index')
+    axes[0, 0].set_ylabel('Amplitude')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].set_xlim(0, N - 1)
+
+    im = axes[0, 1].imshow(hann_2d, cmap='viridis', interpolation='nearest')
+    axes[0, 1].set_title('(b) 2D Hann Window', fontsize=12, fontweight='bold')
+    fig.colorbar(im, ax=axes[0, 1], shrink=0.8)
+    axes[0, 1].set_xticks([])
+    axes[0, 1].set_yticks([])
+
+    axes[1, 0].imshow(target_patch, cmap='gray', interpolation='nearest', vmin=0, vmax=1)
+    axes[1, 0].set_title('(c) Raw Target Patch', fontsize=12, fontweight='bold')
+    axes[1, 0].set_xticks([])
+    axes[1, 0].set_yticks([])
+
+    axes[1, 1].imshow(windowed_target, cmap='gray', interpolation='nearest')
+    axes[1, 1].set_title('(d) After Hann Windowing', fontsize=12, fontweight='bold')
+    axes[1, 1].set_xticks([])
+    axes[1, 1].set_yticks([])
+
+    fig.suptitle('Hann Window: Preventing Spectral Leakage', fontsize=14, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_hann_effect.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_hann_effect.png')
+
+    # ── Fig 6: Gaussian label ──
+    y = make_gaussian_label()
+    y_shifted = np.fft.fftshift(y)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+
+    im0 = axes[0].imshow(y_shifted, cmap='hot', interpolation='nearest',
+                          extent=[-N//2, N//2, N//2, -N//2])
+    axes[0].set_title('Desired Response (Gaussian Label)', fontsize=12, fontweight='bold')
+    axes[0].set_xlabel('Column')
+    axes[0].set_ylabel('Row')
+    axes[0].plot(0, 0, 'c+', markersize=15, markeredgewidth=2)
+    fig.colorbar(im0, ax=axes[0], shrink=0.8)
+
+    # 1D cross-section through centre
+    centre_row = y_shifted[N // 2, :]
+    axes[1].plot(np.arange(N) - N // 2, centre_row, 'r-', lw=2.5)
+    axes[1].set_title(f'Centre Cross-Section (sigma={SIGMA})', fontsize=12, fontweight='bold')
+    axes[1].set_xlabel('Displacement (pixels)')
+    axes[1].set_ylabel('Desired response')
+    axes[1].grid(True, alpha=0.3)
+    axes[1].axvline(0, color='gray', ls='--', alpha=0.5)
+
+    fig.suptitle('Training Label: What the Filter Learns to Produce',
+                 fontsize=14, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(os.path.join(FIG_DIR, 'fig_pres_gaussian_label.png'),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('  Saved fig_pres_gaussian_label.png')
+
+    # ── Render equations as transparent PNGs ──
+    eq_dir = os.path.join(FIG_DIR, 'equations')
+    os.makedirs(eq_dir, exist_ok=True)
+
+    equations = {
+        'eq_mosse.png': r'G = H^{*} \odot F',
+        'eq_mosse_filter.png': r'H^{*} = \frac{\sum_i G_i \odot \overline{F_i}}{\sum_i F_i \odot \overline{F_i}}',
+        'eq_circulant.png': r'C(\mathbf{x}) = F^{-1} \, \mathrm{diag}(\hat{\mathbf{x}}) \, F',
+        'eq_alpha.png': r'\hat{\boldsymbol{\alpha}} = \frac{\hat{\mathbf{y}}}{|\hat{\mathbf{x}}|^2 + \lambda}',
+        'eq_detect.png': r'\mathrm{response} = \mathcal{F}^{-1}\!\left\{\overline{\hat{\mathbf{x}}} \odot \hat{\mathbf{z}} \odot \hat{\boldsymbol{\alpha}}\right\}',
+        'eq_combined.png': r'\hat{\mathbf{f}}_{\mathrm{stored}} = \overline{\hat{\boldsymbol{\alpha}}} \odot \hat{\mathbf{x}}',
+        'eq_hw_detect.png': r'\hat{\mathbf{z}} \cdot \overline{\hat{\mathbf{f}}_{\mathrm{stored}}} = \overline{\hat{\mathbf{x}}} \cdot \hat{\mathbf{z}} \cdot \hat{\boldsymbol{\alpha}}',
+        'eq_ifft_trick.png': r'\mathrm{IFFT}(X) = \overline{\mathrm{FFT}(\overline{X})} \;/\; N^2',
+    }
+    for fname, latex in equations.items():
+        render_equation(latex, os.path.join('equations', fname))
+    print(f'  Rendered {len(equations)} equation PNGs to equations/')
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -329,6 +593,8 @@ def main():
                         help='Simulated motion in rows (single-image mode, default=3)')
     parser.add_argument('--shift-col', type=int, default=2,
                         help='Simulated motion in cols (single-image mode, default=2)')
+    parser.add_argument('--presentation', action='store_true',
+                        help='Generate extra high-impact figures for PowerPoint presentation')
     args = parser.parse_args()
 
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -459,6 +725,19 @@ def main():
                      target_patch, search_patch,
                      windowed_target, windowed_search,
                      response, peak_row, peak_col)
+
+    if args.presentation:
+        print('\nGenerating presentation figures...')
+        # Use full_img if in single-image mode, otherwise frame1
+        full_img = full_img if (args.frame1 and not args.frame2) else frame1
+        generate_presentation_figures(
+            full_img, frame1, frame2,
+            target_row, target_col,
+            t_r0, t_c0, s_r0, s_c0,
+            target_patch, search_patch,
+            windowed_target, windowed_search,
+            response, peak_row, peak_col,
+            hann_1d, args.shift_row, args.shift_col)
 
     # ── Summary ──
     print(f'\n=== Summary ===')

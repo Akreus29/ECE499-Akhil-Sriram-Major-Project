@@ -1,0 +1,12 @@
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {3.1}{\ignorespaces Hann window applied to a training patch. Spectral leakage is suppressed by tapering the patch edges to zero.}}{15}{figure.caption.6}%
+\contentsline {figure}{\numberline {3.2}{\ignorespaces 2D Gaussian desired response ($\sigma {=}2.0$) used as the training label. The peak at centre encodes the target location.}}{15}{figure.caption.6}%
+\contentsline {figure}{\numberline {3.3}{\ignorespaces Frame 1: User-selected target region (green bounding box). The $32\times 32$ patch centred here is used for KCF training.}}{16}{figure.caption.7}%
+\contentsline {figure}{\numberline {3.4}{\ignorespaces Frame 2: NCC search result. The heatmap shows correlation scores across the search region.}}{16}{figure.caption.8}%
+\contentsline {figure}{\numberline {3.5}{\ignorespaces Frame 3: KCF detection result on the NCC-initialised patch. The bounding box marks the refined target position.}}{16}{figure.caption.8}%
+\contentsline {figure}{\numberline {3.6}{\ignorespaces Vivado simulation waveform showing the \texttt {done} pulse and output peak coordinates after the full KCF detection pipeline completes.}}{21}{figure.caption.12}%
+\contentsline {figure}{\numberline {3.7}{\ignorespaces KCF response map (2D heat-map) from the Python reference model. The peak at $(row{=}18, col{=}19)$ matches the RTL simulation output, confirming hardware--software agreement.}}{22}{figure.caption.13}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }

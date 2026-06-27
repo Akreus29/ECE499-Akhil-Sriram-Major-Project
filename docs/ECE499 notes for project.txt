@@ -45,3 +45,69 @@ LOOP for each new frame:
   9. Draw bounding box at new center with original width/height
 
 OUTPUT: Bounding box position each frame
+
+
+Imagine you have a video stream. In the first frame, someone draws a box around an object (say a car). Your job: in every subsequent frame, find where that car moved to. That's visual object tracking.
+
+The naive approach: slide the template image across every possible position in the new frame, compare pixel-by-pixel, find the best match. This is incredibly slow — for a 32×32 patch, you'd need to check thousands of positions, each requiring 1024 comparisons.
+
+KCF's trick: Instead of sliding and comparing in the spatial domain, transform everything into the frequency domain using FFT. In the frequency domain, the entire sliding-and-comparing operation collapses into a single element-wise multiply. That's the fundamental insight.
+Run python scripts/kcf_real_image.py data/Test_image1.png --row 240 --col 300 -- overwrites alpha_hat.mem and test_patch_32.mem with real-image data
+Run the Verilog simulation -- it picks up those same files and produces the hardware result
+The twiddle and Hann files don't change between runs (they're fixed math constants), so you only need gen_data_32.py once to create those. After that, kcf_real_image.py only overwrites the two data-dependent files.
+
+so in the verilog, what value is peak row/col/val and what do they signify?
+From the Verilog (kcf_detect_top.sv lines 28-30):
+
+
+peak_row  — 5-bit index (0–31), the row of the maximum value in the 32×32 response map
+peak_col  — 5-bit index (0–31), the column of the maximum value
+peak_val  — 16-bit Q8.8 signed, the magnitude of that maximum
+What they mean:
+
+The peak location gives the DFT-wrapped displacement of the target between frames. To get the actual pixel displacement, you apply the circular unwrap (Section 3.6 of the report):
+
+If peak_row < 16 → displacement = +peak_row (target moved down)
+If peak_row >= 16 → displacement = peak_row - 32 (target moved up)
+Same for peak_col
+For the real-image demo:
+
+Hardware outputs peak_row = 29, peak_col = 30
+Unwrap: 29 - 32 = -3, 30 - 32 = -2
+Meaning: the target moved 3 pixels up and 2 pixels left relative to the search patch
+peak_val is the correlation strength at that location in Q8.8 format. Divide by 256 to get the float value. It's scaled by K/N relative to the true response (e.g., 2/32 = 0.0625× for the real image). A higher value means a stronger match. It's useful for confidence thresholding but the location is what matters for tracking.
+
+
+Btw so in this if this filter is being used, doesnt it mean that the output matrix will be smaller than the input's.
+No, the output is the same size as the input — always 32x32.
+
+The KCF detection doesn't work like a CNN convolution (where output shrinks). It uses circular convolution via the FFT, which wraps around instead of shrinking. Here's why:
+
+Input search patch: 32x32
+FFT(search patch): 32x32 complex
+Element-wise multiply with stored filter: 32x32 complex
+IFFT(product): 32x32 real — this is the response map
+Peak finder scans all 1024 values
+Every step is 32x32 → 32x32. The FFT/IFFT pair computes a circular correlation, meaning the patch is treated as if it tiles infinitely (wraps around). That's exactly why the DFT displacement wraps — index 29 means -3, because the correlation "wrapped around" the 32-pixel boundary.
+
+This is the key advantage of KCF: unlike sliding-window methods where you'd need a larger search area than the template, KCF tests all cyclic shifts of the 32x32 patch simultaneously in one FFT+multiply+IFFT pass.
+
+
+
+so 29 and 30 means the 29th and 30th pixel in the search patch?
+Not exactly. 29 and 30 are DFT indices, not pixel positions in the search patch.
+
+Because of DFT circular wrapping (Section 3.6 of the report):
+
+peak_row = 29 → since 29 >= 16 (N/2), displacement = 29 - 32 = -3
+peak_col = 30 → since 30 >= 16, displacement = 30 - 32 = -2
+This means: the target moved 3 pixels up and 2 pixels left relative to where the search patch was cropped.
+
+Think of the 32-element DFT output as a circular number line:
+
+
+Index:         0   1   2   3  ...  14  15  16  17  ...  29  30  31
+Displacement: +0  +1  +2  +3 ... +14 +15 -16 -15  ...  -3  -2  -1
+So index 29 doesn't mean "the 29th pixel" — it means "shifted by -3 pixels." It's the same wrapping as a clock: 10 o'clock is -2 hours from 12, not +10.
+
+
