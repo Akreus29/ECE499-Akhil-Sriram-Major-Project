@@ -154,6 +154,17 @@ def gen_alpha(patch, hann):
             values.append(float_to_q88(combined_scaled[r, c].imag))
     write_mem('alpha_hat.mem', values)
 
+    # Split re/im files for direct $readmemh into two BRAMs (synthesizable
+    # kcf_detect_top — avoids the procedural de-interleave initial block)
+    re_vals = []
+    im_vals = []
+    for r in range(N):
+        for c in range(N):
+            re_vals.append(float_to_q88(combined_scaled[r, c].real))
+            im_vals.append(float_to_q88(combined_scaled[r, c].imag))
+    write_mem('alpha_hat_re.mem', re_vals)
+    write_mem('alpha_hat_im.mem', im_vals)
+
     return alpha_hat, peak
 
 

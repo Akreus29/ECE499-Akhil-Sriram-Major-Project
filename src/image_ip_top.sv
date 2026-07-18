@@ -120,7 +120,10 @@ module image_ip_top #(
         .detect_start(kcf_detect_start_r),
         .update_start(kcf_update_start_r),
         // No external alpha init needed in normal operation
-        .alpha_wr_addr(0), .alpha_wr_re(0), .alpha_wr_im(0), .alpha_wr_en(0),
+        .alpha_wr_addr({LOG2N+LOG2N{1'b0}}),
+        .alpha_wr_re({DATA_WIDTH{1'b0}}),
+        .alpha_wr_im({DATA_WIDTH{1'b0}}),
+        .alpha_wr_en(1'b0),
         .lambda(ctrl_lambda),
         .peak_row(kcf_peak_row),         .peak_col(kcf_peak_col),
         .peak_val(kcf_score),
@@ -164,8 +167,13 @@ module image_ip_top #(
     end
 
     // ── Control / Status FSM ────────────────────────────────────────────────
-    // Combinational logic feeds handover controller; status registers update on result
+    // ctrl_start (a 1-cycle pulse from an AXI register write) and
+    // axis_patch_ready (a 1-cycle pulse on stream TLAST) can never be relied
+    // on to coincide, so both are LATCHED as pending flags; detection fires
+    // when both are set, in either arrival order.
     reg prev_done;
+    reg start_pend;    // ctrl_start seen, waiting for patch
+    reg patch_pend;    // full patch received, waiting for start
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -178,19 +186,33 @@ module image_ip_top #(
             irq_done        <= 0;
             hc_frame_valid  <= 0;
             prev_done       <= 0;
+            start_pend      <= 0;
+            patch_pend      <= 0;
         end else begin
             irq_done       <= 0;
             hc_frame_valid <= 0;
 
             // Clear done on soft reset or new start
-            if (ctrl_soft_reset)
-                stat_done <= 0;
+            if (ctrl_soft_reset) begin
+                stat_done  <= 0;
+                start_pend <= 0;
+                patch_pend <= 0;
+            end
 
-            // Launch handover controller when patch arrives and ctrl_start is set
-            if (axis_patch_ready && ctrl_start) begin
+            // Latch pending flags (pulse → level)
+            if (ctrl_start)
+                start_pend <= 1;
+            if (axis_patch_ready)
+                patch_pend <= 1;
+
+            // Launch when a start command and a complete patch are both pending
+            if ((start_pend || ctrl_start) && (patch_pend || axis_patch_ready)
+                && !stat_busy) begin
                 hc_frame_valid <= 1;
                 stat_busy      <= 1;
                 stat_done      <= 0;
+                start_pend     <= 0;
+                patch_pend     <= 0;
             end
 
             // Latch results when handover controller produces a valid output

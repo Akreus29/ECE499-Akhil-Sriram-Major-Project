@@ -31,9 +31,11 @@ module axi_stream_patch_buf #(
     input  wire                       s_axis_tlast,
     input  wire                       s_axis_tuser,   // 0=patch, 1=template
 
-    // Write-port to trackers (combinational; trackers latch on wr_en)
-    output wire [$clog2(N*N)-1:0]     wr_addr,
-    output wire signed [DATA_WIDTH-1:0] wr_data,
+    // Write-port to trackers — addr/data/en are registered TOGETHER so they
+    // stay aligned (a combinational addr with a registered wr_en would write
+    // the wrong pixel on the cycle after each handshake)
+    output reg  [$clog2(N*N)-1:0]     wr_addr,
+    output reg  signed [DATA_WIDTH-1:0] wr_data,
     output reg                        patch_wr_en,   // high when writing a patch pixel
     output reg                        tmpl_wr_en,    // high when writing a template pixel
 
@@ -47,13 +49,12 @@ module axi_stream_patch_buf #(
 
     reg [ADDR_W-1:0] pixel_cnt;   // 0..TOTAL-1
 
-    assign wr_addr = pixel_cnt;
-    assign wr_data = $signed(s_axis_tdata);
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             s_axis_tready <= 1;    // always ready (no back-pressure needed)
             pixel_cnt     <= 0;
+            wr_addr       <= 0;
+            wr_data       <= 0;
             patch_wr_en   <= 0;
             tmpl_wr_en    <= 0;
             patch_ready   <= 0;
@@ -65,6 +66,10 @@ module axi_stream_patch_buf #(
             tmpl_ready  <= 0;
 
             if (s_axis_tvalid && s_axis_tready) begin
+                // Latch address and data with the enable — all three are
+                // valid together on the following cycle
+                wr_addr <= pixel_cnt;
+                wr_data <= $signed(s_axis_tdata);
                 if (s_axis_tuser) begin
                     // Template pixel
                     tmpl_wr_en <= 1;

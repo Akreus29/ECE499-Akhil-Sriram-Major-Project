@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where *)",
+      "Bash(pip show *)",
+      "Bash(pip list *)",
+      "Bash(iverilog *)",
+      "Bash(vvp *)",
+      "Bash(git -C * remote -v)",
+      "Bash(git -C * log *)",
+      "Bash(git -C * status *)",
+      "Bash(for repo in *)",
+      "Bash(ls C:/Users/Admin/Documents/work/ECE499/*)"
+    ]
+  }
+}

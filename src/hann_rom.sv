@@ -15,7 +15,7 @@ module hann_rom #(
     reg [DATA_WIDTH-1:0] mem [0:N-1];
 
     initial begin
-        $readmemh("../data/hann_64.mem", mem);
+        $readmemh("hann_64.mem", mem);
     end
 
     always @(*) begin

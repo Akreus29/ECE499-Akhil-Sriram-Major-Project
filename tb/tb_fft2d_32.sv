@@ -22,7 +22,8 @@ module tb_fft2d_32;
     wire signed [DATA_WIDTH-1:0]   rd_data_re, rd_data_im;
     wire                           done;
 
-    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC), .SCALE_EN(0)) dut (
+    fft2d_32 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC),
+               .SCALE_EN_ROW(0), .SCALE_EN_COL(0)) dut (
         .clk(clk), .rst_n(rst_n),
         .wr_addr(wr_addr), .wr_data_re(wr_data_re),
         .wr_data_im(wr_data_im), .wr_en(wr_en),
@@ -61,12 +62,13 @@ module tb_fft2d_32;
         @(posedge done);
         @(posedge clk);
 
-        // Read first 4 bins
+        // Read first 4 bins (registered read: data valid 1 cycle after addr)
         $display("FFT2D of impulse at (0,0):");
         for (i = 0; i < 4; i = i + 1) begin
             @(posedge clk);
             rd_addr <= i;
-            @(posedge clk);
+            @(posedge clk);   // address presented to BRAM
+            @(posedge clk);   // registered read data now stable
             $display("  Bin[%0d]: re=%0d im=%0d", i, rd_data_re, rd_data_im);
         end
         // Expect: all bins = (1.0, 0) since FFT of delta = constant
@@ -92,7 +94,8 @@ module tb_fft2d_32;
         for (i = 0; i < 4; i = i + 1) begin
             @(posedge clk);
             rd_addr <= i;
-            @(posedge clk);
+            @(posedge clk);   // address presented to BRAM
+            @(posedge clk);   // registered read data now stable
             $display("  Bin[%0d]: re=%0d im=%0d", i, rd_data_re, rd_data_im);
         end
         // Expect: bin[0] = N^2 * 0.25 = 1024 * 0.25 = 256.0 = 65536 in Q8.8

@@ -19,7 +19,7 @@ module twiddle_rom #(
     reg signed [DATA_WIDTH-1:0] mem [0:N-1];
 
     initial begin
-        $readmemh("../data/twiddle_64.mem", mem);
+        $readmemh("twiddle_64.mem", mem);
     end
 
     assign w_re = mem[{addr, 1'b0}];
