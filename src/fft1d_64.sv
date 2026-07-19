@@ -3,7 +3,13 @@
 // 64-point radix-2 DIT FFT, iterative single-butterfly architecture.
 // log2(64) = 6 stages, 32 butterfly ops per stage = 192 cycles per transform.
 // Uses scaled butterfly (>>>1 per stage when scale_en=1) to prevent overflow.
-// Interface identical to fft1d_32.sv; only N and counter widths change.
+//
+// RESOURCE-FIXED VERSION: the old out_re/out_im output arrays and the
+// parallel S_OUTPUT copy state are removed — they were pure 1-cycle copies
+// of the working buffer costing ~4K flip-flops plus wide muxes per instance.
+// Results are instead read through a combinational read port
+// (out_rd_addr → out_rd_re/out_rd_im) directly from the working buffer,
+// which is stable from `done` until the next start.
 
 module fft1d_64 #(
     parameter N          = 64,
@@ -16,8 +22,10 @@ module fft1d_64 #(
     input  wire                          scale_en,   // 1 = >>>1 per stage, 0 = no scaling
     input  wire signed [DATA_WIDTH-1:0]  in_re [0:N-1],
     input  wire signed [DATA_WIDTH-1:0]  in_im [0:N-1],
-    output reg  signed [DATA_WIDTH-1:0]  out_re [0:N-1],
-    output reg  signed [DATA_WIDTH-1:0]  out_im [0:N-1],
+    // Result read port (combinational; valid from done until next start)
+    input  wire [5:0]                    out_rd_addr,
+    output wire signed [DATA_WIDTH-1:0]  out_rd_re,
+    output wire signed [DATA_WIDTH-1:0]  out_rd_im,
     output reg                           done
 );
 
@@ -25,14 +33,17 @@ module fft1d_64 #(
     localparam S_IDLE   = 3'd0;
     localparam S_BITREV = 3'd1;
     localparam S_STAGE  = 3'd2;
-    localparam S_OUTPUT = 3'd3;
-    localparam S_DONE   = 3'd4;
+    localparam S_DONE   = 3'd3;
 
     reg [2:0] state;
 
     // ── Working buffer ──────────────────────────────────────────────────
     reg signed [DATA_WIDTH-1:0] buf_re [0:N-1];
     reg signed [DATA_WIDTH-1:0] buf_im [0:N-1];
+
+    // Result read port — combinational view into the working buffer
+    assign out_rd_re = buf_re[out_rd_addr];
+    assign out_rd_im = buf_im[out_rd_addr];
 
     // ── Stage / butterfly counters ──────────────────────────────────────
     reg [2:0] stage_cnt;    // 0..5 (6 stages)
@@ -128,22 +139,13 @@ module fft1d_64 #(
                     if (bfly_cnt == 5'd31) begin
                         bfly_cnt <= 0;
                         if (stage_cnt == 3'd5) begin
-                            state <= S_OUTPUT;
+                            state <= S_DONE;   // results readable via out_rd port
                         end else begin
                             stage_cnt <= stage_cnt + 1;
                         end
                     end else begin
                         bfly_cnt <= bfly_cnt + 1;
                     end
-                end
-
-                // Copy buffer to outputs (1 cycle)
-                S_OUTPUT: begin
-                    for (i = 0; i < N; i = i + 1) begin
-                        out_re[i] <= buf_re[i];
-                        out_im[i] <= buf_im[i];
-                    end
-                    state <= S_DONE;
                 end
 
                 S_DONE: begin

@@ -89,7 +89,6 @@ module kcf_top #(
 
     // Early declarations (used inside BRAM blocks below)
     wire signed [DATA_WIDTH-1:0] fft_rd_re, fft_rd_im;
-    wire signed [DATA_WIDTH-1:0] ifft_rd_re, ifft_rd_im;
     wire signed [DATA_WIDTH-1:0] cmul_out_re, cmul_out_im;
     wire signed [DATA_WIDTH-1:0] div_out_re, div_out_im;
     wire                         div_done, div_busy, div_dbz;
@@ -100,7 +99,7 @@ module kcf_top #(
     // ════════════════════════════════════════════════════════════════════
 
     // ── Input patch buffer ──────────────────────────────────────────────
-    reg signed [DATA_WIDTH-1:0] patch_buf [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] patch_buf [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] patch_rd;
     wire patch_we = (state == S_IDLE) && patch_wr_en;
     always @(posedge clk) begin
@@ -110,8 +109,8 @@ module kcf_top #(
 
     // ── Alpha BRAM (filter coefficients, complex) ───────────────────────
     // Write sources: external seed (S_IDLE) or divider result (S_U_DIV).
-    reg signed [DATA_WIDTH-1:0] alpha_re [0:TOTAL-1];
-    reg signed [DATA_WIDTH-1:0] alpha_im [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] alpha_re [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] alpha_im [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] alpha_rd_re, alpha_rd_im;
 
     reg                          alpha_we;
@@ -140,8 +139,8 @@ module kcf_top #(
     end
 
     // ── Saved X_hat = FFT(Hann·patch) — reused by update phase ─────────
-    reg signed [DATA_WIDTH-1:0] x_hat_re [0:TOTAL-1];
-    reg signed [DATA_WIDTH-1:0] x_hat_im [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] x_hat_re [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] x_hat_im [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] x_rd_re, x_rd_im;
     wire xhat_we = (state == S_D_XHAT_SV) && cnt_v;
     always @(posedge clk) begin
@@ -154,8 +153,8 @@ module kcf_top #(
     end
 
     // ── Y_hat = FFT(gauss_label) — computed once at init ───────────────
-    reg signed [DATA_WIDTH-1:0] y_hat_re [0:TOTAL-1];
-    reg signed [DATA_WIDTH-1:0] y_hat_im [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] y_hat_re [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] y_hat_im [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] y_rd_re, y_rd_im;
     wire yhat_we = (state == S_INIT_SAV) && cnt_v;
     always @(posedge clk) begin
@@ -168,25 +167,33 @@ module kcf_top #(
     end
 
     // ── Element-multiply buffer ─────────────────────────────────────────
-    reg signed [DATA_WIDTH-1:0] mul_re [0:TOTAL-1];
-    reg signed [DATA_WIDTH-1:0] mul_im [0:TOTAL-1];
+    // Spectral column 0 is ZEROED: after the row-pass FFT, column 0 holds
+    // every row's DC term — the largest spectral values — and the unscaled
+    // column pass overflows Q8.8 there, wrapping into garbage that shows up
+    // as a column-0 ridge in the response map (spurious peaks at (k,0)).
+    // Those bins only encode the patch's vertical-mean profile, which
+    // carries no 2-D localization information, so dropping them removes the
+    // artifact without affecting peak position.
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] mul_re [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] mul_im [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] mul_rd_re, mul_rd_im;
-    wire mul_we = (state == S_D_MUL) && cnt_v;
+    wire mul_we      = (state == S_D_MUL) && cnt_v;
+    wire mul_zero_dc = (cnt_d[LOG2N-1:0] == {LOG2N{1'b0}});   // spectral col 0
     always @(posedge clk) begin
         if (mul_we) begin
-            mul_re[cnt_d] <= cmul_out_re;
-            mul_im[cnt_d] <= cmul_out_im;
+            mul_re[cnt_d] <= mul_zero_dc ? {DATA_WIDTH{1'b0}} : cmul_out_re;
+            mul_im[cnt_d] <= mul_zero_dc ? {DATA_WIDTH{1'b0}} : cmul_out_im;
         end
         mul_rd_re <= mul_re[cnt];
         mul_rd_im <= mul_im[cnt];
     end
 
     // ── Response map (written from IFFT, scanned by peak_finder) ────────
-    reg signed [DATA_WIDTH-1:0] resp_map [0:TOTAL-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] resp_map [0:TOTAL-1];
     reg signed [DATA_WIDTH-1:0] resp_rd;
     wire resp_we = (state == S_D_RESP) && cnt_v;
     always @(posedge clk) begin
-        if (resp_we) resp_map[cnt_d] <= ifft_rd_re;
+        if (resp_we) resp_map[cnt_d] <= fft_rd_re;   // shared u_fft real output
         resp_rd <= resp_map[pf_rd_addr];
     end
 
@@ -247,21 +254,18 @@ module kcf_top #(
     );
 
     // ════════════════════════════════════════════════════════════════════
-    //  IFFT2D — rd_data has 1-cycle latency
+    //  IFFT — SHARED with the forward FFT engine above (u_fft).
+    //  The forward FFT (detection / Y_hat) and the inverse never run at the
+    //  same time in this FSM, so one fft2d_64 serves both — halving the KCF
+    //  LUT/FF footprint (the old dedicated ifft2d_64 held a second full FFT).
+    //
+    //  Conjugate trick, real-output form:
+    //     Re(IFFT(X)) = (1/N)·Re(FFT(conj(X)))
+    //  so for the inverse pass we write conj(mul) = {mul_re, −mul_im} into
+    //  u_fft, run it, and read u_fft's real output as the response map.  No
+    //  output conjugation is needed because only the real part is used.
+    //  (Same SCALE_EN_ROW=1, SCALE_EN_COL=0 scaling as the forward pass.)
     // ════════════════════════════════════════════════════════════════════
-    reg  [ADDR_W-1:0]            ifft_wr_addr;
-    reg  signed [DATA_WIDTH-1:0] ifft_wr_re, ifft_wr_im;
-    reg                          ifft_wr_en, ifft_start;
-    wire                         ifft_done;
-
-    ifft2d_64 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) u_ifft (
-        .clk(clk), .rst_n(rst_n),
-        .wr_addr(ifft_wr_addr), .wr_data_re(ifft_wr_re),
-        .wr_data_im(ifft_wr_im), .wr_en(ifft_wr_en),
-        .start(ifft_start),
-        .rd_addr(cnt), .rd_data_re(ifft_rd_re), .rd_data_im(ifft_rd_im),
-        .done(ifft_done)
-    );
 
     // ════════════════════════════════════════════════════════════════════
     //  Peak finder — read master on resp_map BRAM
@@ -319,11 +323,6 @@ module kcf_top #(
             fft_wr_addr <= {ADDR_W{1'b0}};
             fft_wr_re   <= {DATA_WIDTH{1'b0}};
             fft_wr_im   <= {DATA_WIDTH{1'b0}};
-            ifft_wr_en  <= 1'b0;
-            ifft_start  <= 1'b0;
-            ifft_wr_addr<= {ADDR_W{1'b0}};
-            ifft_wr_re  <= {DATA_WIDTH{1'b0}};
-            ifft_wr_im  <= {DATA_WIDTH{1'b0}};
             pk_start    <= 1'b0;
             div_start   <= 1'b0;
             detect_done <= 1'b0;
@@ -335,8 +334,6 @@ module kcf_top #(
         end else begin
             fft_wr_en   <= 1'b0;
             fft_start   <= 1'b0;
-            ifft_wr_en  <= 1'b0;
-            ifft_start  <= 1'b0;
             pk_start    <= 1'b0;
             div_start   <= 1'b0;
             detect_done <= 1'b0;
@@ -453,28 +450,30 @@ module kcf_top #(
                     end
                 end
 
-                // Feed mul BRAM into IFFT
+                // Feed conj(mul) into the SHARED u_fft (inverse pass).
+                // u_fft is idle here (X_hat was fully consumed in S_D_MUL),
+                // so it accepts writes; imag is negated for the conjugate.
                 S_D_IFFT_LD: begin
                     if (cnt_v) begin
-                        ifft_wr_addr <= cnt_d;
-                        ifft_wr_re   <= mul_rd_re;
-                        ifft_wr_im   <= mul_rd_im;
-                        ifft_wr_en   <= 1'b1;
+                        fft_wr_addr <= cnt_d;
+                        fft_wr_re   <= mul_rd_re;
+                        fft_wr_im   <= -mul_rd_im;      // conj(mul)
+                        fft_wr_en   <= 1'b1;
                     end
                     cnt_d <= cnt;
                     cnt_v <= 1'b1;
                     if (cnt != TOTAL-1)
                         cnt <= cnt + 1'b1;
                     if (cnt_v && cnt_d == TOTAL-1) begin
-                        ifft_start <= 1'b1;
-                        cnt        <= {ADDR_W{1'b0}};
-                        cnt_v      <= 1'b0;
-                        state      <= S_D_IFFT_RN;
+                        fft_start <= 1'b1;
+                        cnt       <= {ADDR_W{1'b0}};
+                        cnt_v     <= 1'b0;
+                        state     <= S_D_IFFT_RN;
                     end
                 end
 
                 S_D_IFFT_RN: begin
-                    if (ifft_done) begin
+                    if (fft_done) begin
                         cnt   <= {ADDR_W{1'b0}};
                         cnt_v <= 1'b0;
                         state <= S_D_RESP;

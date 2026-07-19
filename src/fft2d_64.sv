@@ -63,12 +63,13 @@ module fft2d_64 #(
     // ── Interface arrays to fft1d (declared early — used in write mux) ──
     reg  signed [DATA_WIDTH-1:0] fft_in_re  [0:N-1];
     reg  signed [DATA_WIDTH-1:0] fft_in_im  [0:N-1];
-    wire signed [DATA_WIDTH-1:0] fft_out_re [0:N-1];
-    wire signed [DATA_WIDTH-1:0] fft_out_im [0:N-1];
+    // Result read port from fft1d (replaces the old parallel out arrays)
+    wire signed [DATA_WIDTH-1:0] fft1d_rd_re, fft1d_rd_im;
 
-    // ── Internal N×N complex buffer (BRAM) ──────────────────────────────
-    reg signed [DATA_WIDTH-1:0] buf_re [0:N*N-1];
-    reg signed [DATA_WIDTH-1:0] buf_im [0:N*N-1];
+    // ── Internal N×N complex buffer (BRAM — forced, do not let Vivado
+    //    fall back to LUTRAM/registers) ───────────────────────────────────
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] buf_re [0:N*N-1];
+    (* ram_style = "block" *) reg signed [DATA_WIDTH-1:0] buf_im [0:N*N-1];
 
     // Read-address mux (combinational; BRAM output register below)
     reg [ADDR_W-1:0] buf_raddr;
@@ -89,14 +90,14 @@ module fft2d_64 #(
             S_ROW_SAVE: begin
                 buf_we       = 1'b1;
                 buf_waddr    = {line_idx, sv_cnt};
-                buf_wdata_re = fft_out_re[sv_cnt];
-                buf_wdata_im = fft_out_im[sv_cnt];
+                buf_wdata_re = fft1d_rd_re;      // fft1d.buf[sv_cnt]
+                buf_wdata_im = fft1d_rd_im;
             end
             S_COL_SAVE: begin
                 buf_we       = 1'b1;
                 buf_waddr    = {sv_cnt, line_idx};
-                buf_wdata_re = fft_out_re[sv_cnt];
-                buf_wdata_im = fft_out_im[sv_cnt];
+                buf_wdata_re = fft1d_rd_re;
+                buf_wdata_im = fft1d_rd_im;
             end
             default: begin                                // external write (IDLE)
                 buf_we       = wr_en && (state == S_IDLE);
@@ -134,7 +135,9 @@ module fft2d_64 #(
         .start(fft_start),
         .scale_en(fft_scale_en),
         .in_re(fft_in_re), .in_im(fft_in_im),
-        .out_re(fft_out_re), .out_im(fft_out_im),
+        .out_rd_addr(sv_cnt),          // serial result reads in the save states
+        .out_rd_re(fft1d_rd_re),
+        .out_rd_im(fft1d_rd_im),
         .done(fft_done)
     );
 

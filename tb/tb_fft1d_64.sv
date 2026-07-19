@@ -17,16 +17,21 @@ module tb_fft1d_64;
 
     reg  signed [DATA_WIDTH-1:0] in_re [0:N-1];
     reg  signed [DATA_WIDTH-1:0] in_im [0:N-1];
-    wire signed [DATA_WIDTH-1:0] out_re [0:N-1];
-    wire signed [DATA_WIDTH-1:0] out_im [0:N-1];
+    reg  [5:0]                   ord_addr = 0;
+    wire signed [DATA_WIDTH-1:0] out_rd_re, out_rd_im;
     wire done;
+
+    // Convenience arrays filled through the read port after each run
+    reg signed [DATA_WIDTH-1:0] out_re [0:N-1];
+    reg signed [DATA_WIDTH-1:0] out_im [0:N-1];
 
     always #5 clk = ~clk;
 
     fft1d_64 #(.N(N), .DATA_WIDTH(DATA_WIDTH), .FRAC(FRAC)) dut (
         .clk(clk), .rst_n(rst_n), .start(start), .scale_en(scale_en),
         .in_re(in_re), .in_im(in_im),
-        .out_re(out_re), .out_im(out_im), .done(done)
+        .out_rd_addr(ord_addr), .out_rd_re(out_rd_re), .out_rd_im(out_rd_im),
+        .done(done)
     );
 
     integer i;
@@ -41,6 +46,13 @@ module tb_fft1d_64;
             start = 0;
             wait(done);
             @(posedge clk); #1;
+            // Capture results through the combinational read port
+            for (i = 0; i < N; i = i + 1) begin
+                ord_addr = i[5:0];
+                #1;
+                out_re[i] = out_rd_re;
+                out_im[i] = out_rd_im;
+            end
         end
     endtask
 
