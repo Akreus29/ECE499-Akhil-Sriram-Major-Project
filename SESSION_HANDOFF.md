@@ -52,20 +52,21 @@
 
 ---
 
-## 1. Repo state — **`gc2025` (Infracore) IS PRIMARY**
+## 1. Repo state — **keep the Infracore `gc2025` monorepo up to date**
 
 > **RULE (from the user, 2026-07-26): the Infracore `gc2025` monorepo must
 > ALWAYS be up to date.** It is what the collaborator actually builds, so a fix
-> sitting only in the IP repo is invisible to them. Never end a session with the
-> monorepo lagging `ImageProcessing_HW_AcceleratorIP`. The constituent repos
-> come after it.
+> sitting only in the IP repo is invisible to them — it may as well not exist.
+> Never end a session with the monorepo lagging
+> `ImageProcessing_HW_AcceleratorIP`. This is about *currency*, not about a
+> ceremony over which repo is pushed first.
 
-| # | Repo | Branch | HEAD | Role |
-|---|---|---|---|---|
-| — | `ImageProcessing_HW_AcceleratorIP` | `main` | **`5d1a949`** | IP **source of truth** (src/, data/, tb/, scripts/, docs). Commit here FIRST — the others vendor *from* it. Ordering constraint, not priority. |
-| **1** | **`gc2025`** (`gc2025_infracore/` locally) | `main` | **`c0cb39d`** | **PRIMARY — the monorepo the collaborator builds** (`hw/`, GCSDK, `irst_main` firmware, `tracker_viz`). Re-vendor + push in the SAME operation as the IP repo. |
-| 2 | `custom_soc_HW` | `rv32imac-uart1-spi1-i2c0-kcf` | **`6252a9b`** | SoC build; vendors IP into `ip_verilog/kcf/` |
-| 3 | `ECE499-Akhil-Sriram-Major-Project` | `main` | **`41c2010`** | docs / this handoff (Akreus29, not Infracore) |
+| Repo | Branch | HEAD | Role |
+|---|---|---|---|
+| **`gc2025`** (`gc2025_infracore/` locally) | `main` | **`c0cb39d`** | **The monorepo the collaborator builds** (`hw/`, GCSDK, `irst_main` firmware, `tracker_viz`). **Must never lag.** |
+| `ImageProcessing_HW_AcceleratorIP` | `main` | **`5d1a949`** | IP **source of truth** (src/, data/, tb/, scripts/, docs). Has to be committed before the others can vendor *from* it — mechanics, not ranking. |
+| `custom_soc_HW` | `rv32imac-uart1-spi1-i2c0-kcf` | **`6252a9b`** | SoC build; vendors IP into `ip_verilog/kcf/`. Keep in step. |
+| `ECE499-Akhil-Sriram-Major-Project` | `main` | **`41c2010`** | docs / this handoff (Akreus29, not Infracore) |
 
 > `Akreus29/gc2025` (`gc2025/` locally) is a **personal mirror, NOT the monorepo**
 > — a full IP generation behind (20 files in `hw/ip_verilog/kcf` vs 33) with
@@ -579,9 +580,9 @@ log allows.
   `$readmemh` ROMs and `if($value$plusargs)`.
 - Decoder `error`/`done` are 1-cycle pulses; wrapper latches sticky `jpeg_error`.
 - **NO AXI/register-map changes** (user's hard constraint). Internal compute/logic only.
-- **The Infracore `gc2025` monorepo is PRIMARY and must always be current** —
-  see §1. A fix that lands only in the IP repo is invisible to the collaborator.
-  Re-vendor + push the monorepo in the same operation, never as a follow-up.
+- **Keep the Infracore `gc2025` monorepo up to date** — see §1. A fix that
+  lands only in the IP repo is invisible to the collaborator. Re-vendor and
+  push it as part of the same task, not as a follow-up.
 - Always `git pull` before push (collaborator active on all repos); exclude the
   generated test-vector `.mem` from the vendored `kcf/` dir.
 - Test balls in `tb_ball_demo`/`tb_image_ip_axilite` are interior → unaffected by
