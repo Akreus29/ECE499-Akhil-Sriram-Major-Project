@@ -499,7 +499,7 @@ otherwise; if you do experiment, 68 px is the one worth trying.
 
 ---
 
-## 8c. NEXT ACTIONS (in this order — one change measured at a time)
+## 8e. NEXT ACTIONS (in this order — one change measured at a time)
 
 1. Re-vendor + rebuild, re-run the **same A/B capture pair**. Expect: blank
    NCC conf collapses from ~139 toward single digits, the `(280,192)` corner
