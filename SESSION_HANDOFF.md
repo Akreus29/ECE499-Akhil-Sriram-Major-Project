@@ -33,9 +33,11 @@
      clock-converter (CDC) + MIG DDR3 + RISC-V JTAG/debug, ZERO in the KCF IP**
      (§6). Not fixable from the IP; it is a constraints/P&R job, and §6 now
      lists the specific XDC lines needed (TCK clock + async groups, I/O delays).
-  2. **KCF confidence reads 0 on 522/522 hardware frames** (§5b). Expected
-     downstream symptom of the NCC bug — **re-measure after the §8 rebuild
-     before changing anything.**
+  2. **KCF conf ≡ 0 on 522/522 frames: ROOT-CAUSED AND FIXED** (`53d4428`,
+     §8b). The filter could only ever be trained by the boot designation —
+     the runtime update required a confidence only a trained filter can reach,
+     so `alpha` stayed frozen on the synthetic smiley and never saw the real
+     ball. An NCC acquisition now re-trains the filter on the acquired patch.
 - **HARD CONSTRAINT from the user:** do **NOT** change the AXI communication
   architecture / register map — the collaborator's firmware depends on it. All
   changes must be internal (compute/logic), keeping the register interface
@@ -206,13 +208,13 @@ Three findings:
    median (192). Sweeping THRESH: 180 → 9.8% blank-accept but 78% ball-accept;
    209 → 0% blank but only 10% ball. *The §5 advice to "raise THRESH to 75–90"
    is obsolete* — the blank floor is 120, not 50–63. Retune only after §8.
-3. **KCF confidence is 0 on every single frame of both logs (522/522).** The
-   2-NCC/3-KCF pattern is fully deterministic: acquire → 3 KCF frames → conf 0
-   < KCF_THRESH → fall back. KCF is effectively never contributing.
-   **Do not chase this yet** — the NCC bug meant KCF was always handed a patch
-   centred on a dark corner, so a diffuse response is the *expected* symptom.
-   Re-measure after §8 lands. If conf is still 0 with the ball genuinely
-   centred, see the §8 "next lever" note.
+3. **KCF confidence is 0 on every single frame of both logs (522/522).**
+   **Root-caused — it is a training deadlock, see §8b.** The first guess (that
+   KCF was handed dark-corner patches) is WRONG and the data refutes it: in the
+   ball log KCF was repeatedly handed good *interior* NCC locks at conf 180–231
+   and still returned 0, while its position output moved a plausible ±2 px.
+   KCF was opening the patch in the right place and correlating it against the
+   wrong appearance.
 
 Also: **the camera wedged twice** in the ball log (frames 255–260) —
 `FIFO length > 16 KB buffer` ×3, then `bad JPEG SOI` ×3. `jpeg_frontend.MAXW`
@@ -378,20 +380,66 @@ path, so no new timing pressure).
 identical except the **blank**-frame re-acquisition confidence `2 → 0`. Exactly
 the intended signature: target-present behaviour untouched, blank suppressed.
 
-**NEXT ACTIONS**
+## 8b. KCF conf ≡ 0 — training deadlock (2026-07-26, `53d4428`)
+
+**The KCF filter could only ever be trained by the BOOT designation.**
+
+At runtime, the only path in `track_ctrl` reaching `S_KCF_UPD` (the filter
+update) required `kcf_peak_val >= kcf_thresh` — but a filter cannot produce that
+confidence until it has been trained on the target's actual appearance:
+
+```
+conf 0 → loss branch → update SKIPPED → alpha stays frozen → conf 0 → …
+```
+
+So `alpha` stayed pinned to the boot designation — the **synthetic smiley in
+`data/target_frame.mem`** — for the whole run, and never once saw the real
+ping-pong ball as imaged through the OV5642 + JPEG. Hence conf 0 on 522/522
+frames. The rigid *3 KCF frames then fall back* pattern in both logs is the
+direct signature of the loss branch being taken every single frame
+(`LOSS_FRAMES=3`), which also proves the collaborator has `KCF_THRESH > 0`.
+
+**Why the "dark corner" theory was wrong:** KCF was handed good interior NCC
+locks (conf 180–231) many times in the ball log and still returned 0, with
+sensible ±2 px displacements. It was opening the patch in the *right place* and
+correlating against the *wrong appearance*. Position was fine; the filter was stale.
+
+**Fix (`53d4428`):** an NCC acquisition is a **re-designation**. The first KCF
+frame after one now mirrors the boot path (`S_TI_DET → S_TI_UPD`): discard the
+detection displacement (it came from a filter trained on something else) and
+**train on the freshly acquired, NCC-centred patch**. That frame reports the NCC
+position/confidence instead of a stale-filter displacement.
+
+**This is only safe BECAUSE of §8.** It trains on whatever NCC acquired, so it
+depends on NCC not false-positiving — exactly the risk the old
+"skip update on loss frames" comment was guarding against. `THRESH` +
+`ACQ_FRAMES` are the gate. **Retune `THRESH` on hardware before trusting it.**
+
+Verified (Icarus 12.0): `tb_ball_demo`/`tb_kcf_top` byte-identical;
+`tb_image_ip_axilite` acquisition frame `ABS (130,152) → (128,152)` — now the
+**exact** ball centre — `conf 115 → 256`, frame 2 `conf 69 → 67`, loss detection
+still drops tracking after 3 blank frames, ALL TESTS PASSED.
+
+---
+
+## 8c. NEXT ACTIONS (in this order — one change measured at a time)
+
 1. Re-vendor + rebuild, re-run the **same A/B capture pair**. Expect: blank
-   NCC conf collapses from ~139 toward single digits, and the `(280,192)`
-   corner lock disappears.
-2. **Then** re-read `THRESH`. The old numbers are meaningless post-fix; set it
-   between the new blank ceiling and the new ball floor.
-3. **Then** look at KCF conf. If it is still 0/0/0 with the ball properly
-   centred, the next lever is `CONF_K` (`kcf_top`, default 5 — sim shows the
-   ball at peak/mean ≈ 9.5 and texture ≈ 4.7, so real-world optics may sit
-   between; try 3). Note `conf = max(0, peak − K·mean)` **clamps to 0**, which
-   destroys the measurement — if it stays 0, switch it to a ratio
-   (`conf = min(255, (peak<<5)/mean)`, so 160 ≡ the old K=5 decision point)
-   so the value is at least readable. **That re-scales `KCF_THRESH` (0x34) and
-   needs a firmware retune — get agreement before doing it.**
+   NCC conf collapses from ~139 toward single digits, the `(280,192)` corner
+   lock disappears, **and KCF conf becomes non-zero on real locks.**
+2. **Then** re-read `THRESH` (0x08). The old numbers are meaningless post-fix;
+   set it between the new blank ceiling and the new ball floor. Do this before
+   trusting §8b, which trains on whatever NCC acquires.
+3. **Then** re-read `KCF_THRESH` (0x34) from the new `0x1C` values on a held
+   target vs. empty scene.
+4. Only if KCF conf is *still* 0 with a trained filter and a centred ball:
+   lower `CONF_K` (`kcf_top`, default 5 — sim shows ball peak/mean ≈ 9.5 vs
+   texture ≈ 4.7, so real optics may sit between; try 3). Note
+   `conf = max(0, peak − K·mean)` **clamps to 0**, which destroys the
+   measurement — if it stays 0, switch to a ratio
+   (`conf = min(255, (peak<<5)/mean)`, so 160 ≡ the old K=5 decision point) so
+   the value is at least readable. **That re-scales `KCF_THRESH` and needs a
+   firmware retune — get agreement first.**
 
 Requested from the collaborator (better than the current pair): one capture
 purely **without** the ball, and one with the ball present **from frame 1**,
