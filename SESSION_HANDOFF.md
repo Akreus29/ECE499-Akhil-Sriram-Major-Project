@@ -20,6 +20,10 @@
   4096×16 buffers into `bram_sdp` took LUTRAM 5,376 → **0** and the design
   **93% → 83%** (59,131 → 52,465 LUT), RAMB36 58 → 66 of 135. Beat the
   prediction; ~10.9k LUTs of headroom recovered (§4, §7). **Closed.**
+- **THREE separate root causes of the bad tracking are now fixed** (§8, §8b,
+  §8d): the NCC argmax normalizer, the KCF training deadlock, and a KCF
+  confidence threshold set above the physically achievable value. They had to
+  be found in that order — each was masking the next.
 - **NCC edge-lock ROOT-CAUSED AND FIXED** (`31cfac6`) from the new A/B
   capture pair (§8). Window selection divided by *raw* Σf² while the reported
   confidence divided by *zero-mean* Σ(f−f̄)² — so the argmax carried a pure
@@ -33,11 +37,14 @@
      clock-converter (CDC) + MIG DDR3 + RISC-V JTAG/debug, ZERO in the KCF IP**
      (§6). Not fixable from the IP; it is a constraints/P&R job, and §6 now
      lists the specific XDC lines needed (TCK clock + async groups, I/O delays).
-  2. **KCF conf ≡ 0 on 522/522 frames: ROOT-CAUSED AND FIXED** (`53d4428`,
-     §8b). The filter could only ever be trained by the boot designation —
-     the runtime update required a confidence only a trained filter can reach,
-     so `alpha` stayed frozen on the synthetic smiley and never saw the real
-     ball. An NCC acquisition now re-trains the filter on the acquired patch.
+  2. **KCF conf ≡ 0 on 522/522 frames: ROOT-CAUSED AND FIXED**, two
+     independent causes. (a) `53d4428`/§8b — the filter could only ever be
+     trained by the boot designation, because the runtime update required a
+     confidence only a trained filter can reach; an NCC acquisition now
+     re-trains it. (b) `5d1a949`/§8d — `CONF_K=5` demanded peak/mean > 5, but
+     the real target tops out at 4.0-6.9 ideal and 1.6-4.5 realistic, so the
+     zero-clamped `max(0, peak-5*mean)` read 0 regardless. Confidence is now
+     the ratio itself. **`KCF_THRESH` is rescaled — firmware must retune.**
 - **HARD CONSTRAINT from the user:** do **NOT** change the AXI communication
   architecture / register map — the collaborator's firmware depends on it. All
   changes must be internal (compute/logic), keeping the register interface
@@ -392,10 +399,16 @@ confidence until it has been trained on the target's actual appearance:
 conf 0 → loss branch → update SKIPPED → alpha stays frozen → conf 0 → …
 ```
 
-So `alpha` stayed pinned to the boot designation — the **synthetic smiley in
-`data/target_frame.mem`** — for the whole run, and never once saw the real
-ping-pong ball as imaged through the OV5642 + JPEG. Hence conf 0 on 522/522
-frames. The rigid *3 KCF frames then fall back* pattern in both logs is the
+So `alpha` stayed pinned to whatever the boot designation produced and never
+adapted for the whole run. Hence no runtime learning at all.
+
+> **CORRECTION.** An earlier revision of this file called `target_frame.mem`
+> a "synthetic smiley". It is **not** synthetic — `scripts/build_target.py`
+> sources the **real photo** `New_training_target.jpeg`, segments the ball and
+> composites it at 60 px on a neutral background. The designation target was
+> always a genuine picture of the actual ball. That makes §8d the important
+> half of the story: pre-training was real, but the *threshold* was set above
+> what that target can produce. The rigid *3 KCF frames then fall back* pattern in both logs is the
 direct signature of the loss branch being taken every single frame
 (`LOSS_FRAMES=3`), which also proves the collaborator has `KCF_THRESH > 0`.
 
@@ -422,6 +435,70 @@ still drops tracking after 3 blank frames, ALL TESTS PASSED.
 
 ---
 
+## 8d. KCF `CONF_K=5` was above the achievable ratio (2026-07-26, `5d1a949`)
+
+The second, **independent** cause of conf ≡ 0. Even with §8b fixed — filter
+correctly trained on the real target, perfectly centred, exact scale — the
+threshold was unreachable.
+
+Modelled the exact RTL detect pipeline in numpy (Hann·patch → FFT →
+conj(α)·X̂ → IFFT) using the **baked** `hann_64.mem` / `gauss_label_64.mem`
+ROMs and `lambda = 3/256`, on the real ball photo:
+
+| condition | peak/mean\|resp\| |
+|---|---|
+| ideal — train == detect, exact scale and centring | **4.0 – 6.9** |
+| realistic — scale ±15%, centring ±4 px | **1.6 – 4.5** |
+
+across **every** training diameter from 40 to 76 px, and insensitive to
+`lambda` (0.004–1.0) and to background level (140–230). `CONF_K = 5` requires
+peak/mean > 5 for confidence to be non-zero, so `max(0, peak − 5·mean)` read
+**0 essentially always**. No designation image and no ball diameter fixes this.
+
+`tb_kcf_top`'s 9.5 comes from a **synthetic high-contrast patch**, not the real
+target — which is exactly why simulation never exposed it.
+
+**Fix:** report the ratio itself instead of a zero-clamped difference:
+
+```
+conf = min(CONF_MAX, (peak << CONF_SHIFT) / max(mean|resp|, 1))
+```
+
+`CONF_SHIFT = 5` → 32 counts per 1.0 of ratio (old `CONF_K=5` point ≡ 160).
+One 16-cycle restoring divide per detect (~4.9 ms frame). `peak_val` commits on
+the final divide cycle, one cycle before `detect_done`, preserving the existing
+handshake. FSM widened 4 → 5 bits for `S_D_PKDIV`.
+
+**`KCF_THRESH` (0x34) IS RESCALED — firmware must retune.** Unavoidable:
+confidence was identically 0, so every `KCF_THRESH > 0` behaved identically and
+a retune was needed regardless.
+
+Measured in sim after the fix (divider verified bit-exact by hand):
+
+| case | peak/mean | conf |
+|---|---|---|
+| `tb_kcf_top` match | 458/48 = 9.54 | **305** |
+| `tb_kcf_top` non-target texture | 361/77 = 4.69 | **150** |
+| `tb_image_ip_axilite` tracked ball | 7.7 | **245** |
+| `tb_image_ip_axilite` blank crop | 4.4 | **142** |
+
+Roughly a 2× separation between locked and lost. `KCF_THRESH = 192` (ratio 6.0)
+sits cleanly between and is the value now used in `tb_image_ip_axilite`;
+**start there on hardware.**
+
+### On the designation target itself
+
+`build_target.py --sweep` and the KCF model agree that ball diameter is a weak
+lever — NCC margin is 0.20–0.27 across 44–140 px, and the KCF ratio has no
+reliable trend. A 48 px ball (8 px Hann margin) is **not** an improvement:
+it scored worst in the model (ideal 4.8, realistic-avg 2.1) versus 60 px
+(5.8 / 3.4) and 68 px (6.3 / 4.5). The 2-D Hann retains 95.9% of a 48 px ball
+versus 100% of a 60 px one, but the larger ball simply carries more structure
+through the effective window. **Keep the current 60 px** unless hardware says
+otherwise; if you do experiment, 68 px is the one worth trying.
+
+---
+
 ## 8c. NEXT ACTIONS (in this order — one change measured at a time)
 
 1. Re-vendor + rebuild, re-run the **same A/B capture pair**. Expect: blank
@@ -430,16 +507,12 @@ still drops tracking after 3 blank frames, ALL TESTS PASSED.
 2. **Then** re-read `THRESH` (0x08). The old numbers are meaningless post-fix;
    set it between the new blank ceiling and the new ball floor. Do this before
    trusting §8b, which trains on whatever NCC acquires.
-3. **Then** re-read `KCF_THRESH` (0x34) from the new `0x1C` values on a held
-   target vs. empty scene.
-4. Only if KCF conf is *still* 0 with a trained filter and a centred ball:
-   lower `CONF_K` (`kcf_top`, default 5 — sim shows ball peak/mean ≈ 9.5 vs
-   texture ≈ 4.7, so real optics may sit between; try 3). Note
-   `conf = max(0, peak − K·mean)` **clamps to 0**, which destroys the
-   measurement — if it stays 0, switch to a ratio
-   (`conf = min(255, (peak<<5)/mean)`, so 160 ≡ the old K=5 decision point) so
-   the value is at least readable. **That re-scales `KCF_THRESH` and needs a
-   firmware retune — get agreement first.**
+3. **Then set `KCF_THRESH` (0x34) = 192** to start — it is now a ratio in 1/32
+   units (§8d), NOT the old scale, so the firmware's existing value is wrong.
+   Refine from measured `0x1C` on a held target vs. an empty scene; expect
+   roughly 245-305 locked and 98-150 lost.
+4. Ball diameter is a weak lever and 48 px is worse than the current 60 px
+   (§8d) — do not spend time there unless 1-3 are exhausted.
 
 Requested from the collaborator (better than the current pair): one capture
 purely **without** the ball, and one with the ball present **from frame 1**,
