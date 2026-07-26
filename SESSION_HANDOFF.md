@@ -52,36 +52,58 @@
 
 ---
 
-## 1. Repo state (all on **Infracore-Systems**; pull before every push)
+## 1. Repo state — **`gc2025` (Infracore) IS PRIMARY**
 
-| Repo | Branch | HEAD | Role |
-|---|---|---|---|
-| `ImageProcessing_HW_AcceleratorIP` | `main` | **`6f5894a`** | **IP source of truth** (src/, data/, tb/, scripts/, docs) |
-| `custom_soc_HW` | `rv32imac-uart1-spi1-i2c0-kcf` | **`acb25d5`** | SoC build; vendors IP into `ip_verilog/kcf/` |
-| `gc2025` (`gc2025_infracore/` locally) | `main` | **`1b5c0b5`** | **monorepo the collaborator builds** (`hw/`, GCSDK, `irst_main` firmware, `tracker_viz`) |
+> **RULE (from the user, 2026-07-26): the Infracore `gc2025` monorepo must
+> ALWAYS be up to date.** It is what the collaborator actually builds, so a fix
+> sitting only in the IP repo is invisible to them. Never end a session with the
+> monorepo lagging `ImageProcessing_HW_AcceleratorIP`. The constituent repos
+> come after it.
 
-> NOTE on the re-vendor recipe below: `ball_test_frame.mem` and
-> `tb_target_frame.mem` are currently **tracked** in both build repos, so the
-> `rm -f` step deletes files that are under version control. The 2026-07-26
-> re-vendor restored them (`git checkout --`) to keep the diff to the actual
-> RTL change. Worth deciding once whether those two should be committed or
-> purged, rather than re-resolving it every time.
+| # | Repo | Branch | HEAD | Role |
+|---|---|---|---|---|
+| — | `ImageProcessing_HW_AcceleratorIP` | `main` | **`5d1a949`** | IP **source of truth** (src/, data/, tb/, scripts/, docs). Commit here FIRST — the others vendor *from* it. Ordering constraint, not priority. |
+| **1** | **`gc2025`** (`gc2025_infracore/` locally) | `main` | **`c0cb39d`** | **PRIMARY — the monorepo the collaborator builds** (`hw/`, GCSDK, `irst_main` firmware, `tracker_viz`). Re-vendor + push in the SAME operation as the IP repo. |
+| 2 | `custom_soc_HW` | `rv32imac-uart1-spi1-i2c0-kcf` | **`6252a9b`** | SoC build; vendors IP into `ip_verilog/kcf/` |
+| 3 | `ECE499-Akhil-Sriram-Major-Project` | `main` | **`41c2010`** | docs / this handoff (Akreus29, not Infracore) |
+
+> `Akreus29/gc2025` (`gc2025/` locally) is a **personal mirror, NOT the monorepo**
+> — a full IP generation behind (20 files in `hw/ip_verilog/kcf` vs 33) with
+> uncommitted local edits. **Do not push it without asking.**
+
+**The invariant to check at the START and END of any RTL session:** every
+`src/*.sv` and non-generated `data/*.mem` in the IP repo is byte-identical
+(modulo CRLF) to `gc2025_infracore/hw/ip_verilog/kcf/`. One-liner:
+
+```sh
+IP=ImageProcessing_HW_AcceleratorIP
+V=gc2025_infracore/hw/ip_verilog/kcf
+GEN="ball_test_frame.mem tb_target_frame.mem test_frame_watch.mem"
+for f in $IP/src/*.sv $IP/data/*.mem; do
+  b=$(basename "$f")
+  case " $GEN " in *" $b "*) continue;; esac
+  diff -q --strip-trailing-cr "$f" "$V/$b" >/dev/null || echo "DRIFT: $b"
+done
+```
 
 **Re-vendoring the IP** (README "Re-vendoring the KCF IP"):
 ```
 rm -f <V>/*.sv <V>/*.mem
 cp ../ImageProcessing_HW_AcceleratorIP/src/*.sv  <V>/
 cp ../ImageProcessing_HW_AcceleratorIP/data/*.mem <V>/
-# IMPORTANT: remove generated TEST vectors so they don't pollute the build:
+# remove generated TEST vectors so they don't pollute the build:
 rm -f <V>/ball_test_frame.mem <V>/tb_target_frame.mem <V>/test_frame_watch.mem
+# ball_test_frame.mem + tb_target_frame.mem are TRACKED in both build repos,
+# so the rm above deletes version-controlled files — restore them:
+git -C <repo> checkout -- <V>/ball_test_frame.mem <V>/tb_target_frame.mem
 git add -A <V> && git commit -m "[IP] re-vendor …"
 ```
 `<V>` = `hw/ip_verilog/kcf` (gc2025) or `ip_verilog/kcf` (custom_soc_HW).
 `core.autocrlf=true` on the build repos → `git add -A` is clean (CRLF-only files
-collapse to no-ops; only real content changes commit). `create_project.tcl` globs
+collapse to no-ops; only real content changes commit — the 2026-07-26 re-vendor
+staged exactly the 3 changed `.sv`). `create_project.tcl` globs
 `ip_verilog/kcf/*.sv` + `*.mem`; `$readmemh` ROMs resolve by bare filename.
-(Local `gc2025` under Akreus29 + `ECE499-Akhil…/src` are non-Infracore mirrors —
-don't push unless asked.)
+Always `git pull` before push (collaborator active on all repos).
 
 ---
 
@@ -557,6 +579,9 @@ log allows.
   `$readmemh` ROMs and `if($value$plusargs)`.
 - Decoder `error`/`done` are 1-cycle pulses; wrapper latches sticky `jpeg_error`.
 - **NO AXI/register-map changes** (user's hard constraint). Internal compute/logic only.
+- **The Infracore `gc2025` monorepo is PRIMARY and must always be current** —
+  see §1. A fix that lands only in the IP repo is invisible to the collaborator.
+  Re-vendor + push the monorepo in the same operation, never as a follow-up.
 - Always `git pull` before push (collaborator active on all repos); exclude the
   generated test-vector `.mem` from the vendored `kcf/` dir.
 - Test balls in `tb_ball_demo`/`tb_image_ip_axilite` are interior → unaffected by
