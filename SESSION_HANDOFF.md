@@ -5,7 +5,36 @@
 
 ---
 
-## 0a. NEWEST (2026-07-28) — NCC rebuilt for the final-demo target
+## 0b. NEWEST (2026-07-29) — `conf ≡ 0` on hardware: Et synthesised to 0 (§11)
+
+- Two captures (`uart_rx(with target and status).txt`, and the same run pasted
+  with the `1`/`64` status lines stripped) show **conf=0 on 313/313 and 315/315
+  frames while the position tracks the target correctly**.
+- **Root cause: `tmpl_energy_eff` (Et) is 0 in the bitstream.** Et divides the
+  confidence but **cancels in `ncc_search`'s window compare** — it is the one
+  quantity in the divide that is *not* in the argmax. So losing it gives
+  pixel-perfect tracking and a hard zero, with nothing else observable moving.
+  `ncc_search.sv` then forces `confidence <= 0` via its `div_den != 0` guard.
+- **Why it was 0:** Et came from `reg [25:0] bank_et_rom [0:0]` + `$readmemh`,
+  read *combinationally at a constant index*. That never infers a memory, so
+  Vivado flattens it and drops the `initial`/`$readmemh` — Et = 0 in hardware.
+  `tmpl_bank` survived because it is read through a **registered** port and so
+  infers a block ROM. Every simulator executes the initial block, which is why
+  all five testbenches passed while hardware read 0. **Sim ≠ synthesis.**
+- **Fix (§11):** Et is now an elaboration-time constant `TMPL_BANK_ET`,
+  written into the RTL by `build_target_demo.py` in the same pass that writes
+  `tmpl_bank.mem`, plus a sim assertion that the constant and the `.mem` agree.
+  **`.mem` files unchanged; no AXI/register-map change.** New read-only
+  diagnostic at **0x3C** (`KCF_REG_TMPL_ET`) exposes Et — if it reads 0,
+  confidence cannot be nonzero and nothing else is worth debugging.
+- **A bitstream rebuild IS required** — this is a synthesis-side defect.
+- Evidence bracket: `det ≈ 17 ms` builds reported conf 2–35 (target) and 3–6
+  (bare cloth, matching the documented ≤8 ceiling); every `det ≈ 22 ms` v4.2
+  build reports 0. v4.2 is exactly where Et moved to the baked-bank ROM.
+
+---
+
+## 0a. (2026-07-28) — NCC rebuilt for the final-demo target
 
 - The demo target changed to a **white/red toy jet on black cloth** (11 photos in
   `Target photos for final demo/`). The shipped bank was cut by
@@ -686,3 +715,80 @@ dim target overlap in every scalar the hardware computes.
 - The model over-predicts *target* confidence by ~25 points (documented in
   `kcf_ip.h`) but predicts the *background ceiling* exactly (8, matching the
   hardware capture). Trust it for the floor, not the ceiling.
+
+---
+
+## 11. `conf ≡ 0` with correct tracking — Et synthesised to 0 (2026-07-29)
+
+### 11a. How it was isolated
+
+`ncc_search.sv` S_DONE forces `confidence <= 0` iff `!found_any || div_den == 0`.
+Each branch was closed independently:
+
+| checked | result |
+|---|---|
+| threshold gating | `track_ctrl.sv` assigns `confidence <= ncc_conf` **unconditionally**, before the `>= thresh` test. THRESH only drives the `found` status bit. Not it. |
+| readback scaling | `result_output_if.sv` 0x1C is a plain sign-extension. No Q8.8/percent rescale. Not it. |
+| `found_any == 0` | The capture holds **182 distinct positions over 313 frames**, all multiples of 4 and within `x≤288, y≤208` — genuine argmax output. Position only updates inside the same `if` that sets `found_any`. So it is 1. |
+| the bank / the math | Replaying `ncc_search`'s exact integer arithmetic on the shipped `tmpl_bank.mem` + `tmpl_bank_et.mem` + `target_frame.mem` gives **conf = 71 at (160,120)**, the baked centre. Data and algorithm are healthy. |
+
+`best_ef_zm` is clamped to never be 0, so `div_den == 0` ⟹ **`tmpl_energy == 0`**.
+That is the only remaining producer, and it is invisible everywhere else because
+one shared Et cancels in the `lhs`/`rhs` cross-multiplied window compare.
+
+### 11b. Why Et was 0 — and why nothing caught it
+
+```systemverilog
+reg [25:0] bank_et_rom [0:0];                 // 1-deep
+initial $readmemh(TMPL_BANK_ET_MEM, bank_et_rom);
+assign tmpl_energy_eff = bank_active ? bank_et_rom[0] : tmpl_energy;
+```
+
+A 1-deep array read **combinationally at a constant index** never infers a
+memory; Vivado flattens it to nets and drops the `initial`/`$readmemh`, leaving
+0. `tmpl_bank` is read through a **registered** port (`always @(posedge clk)`),
+infers a block ROM, and keeps its `.mem` init — which is why the templates
+loaded and tracking worked. Simulators execute `initial` regardless, so all
+five testbenches passed. Same family as the §10a/§8d "the check tests nothing"
+bugs, but across the sim/synthesis boundary rather than a constant mismatch.
+
+### 11c. The fix
+
+- **`frame_input_if.sv`** — Et is now `parameter [25:0] TMPL_BANK_ET`, an
+  elaboration-time constant, identical in sim and synthesis. Plus:
+  - a `` `ifndef SYNTHESIS`` assertion that `TMPL_BANK_ET` equals the value in
+    `tmpl_bank_et.mem`, so the two can never drift silently;
+  - `et_runtime` falls back to the constant if a runtime `CTRL.target_init`
+    retires the bank and the tinit energy pass left `tmpl_energy == 0` — a wrong
+    scale factor still gives the GUI a usable number, where 0 gives it nothing.
+- **`image_ip_axilite.sv`** — forwards `TMPL_BANK_ET`.
+- **`build_target_demo.py`** — `write_bank()` now patches the constant into the
+  RTL (and the two testbench overrides) between `BEGIN/END GENERATED` markers,
+  in the same pass that writes the `.mem`. Regeneration cannot desync them.
+- **`result_output_if.sv`** — read-only Et at **0x3C** (`KCF_REG_TMPL_ET`).
+  Additive: the slot read 0 before, and 0x3C is `JPEG_DATA` on the *write* side
+  (reads and writes decode independently, same split as 0x28 IMAGE_FRAME).
+  **No existing register changed.**
+
+`.mem` files are byte-identical — Et is still 259992. Vendored to
+`gc2025_infracore` and `custom_soc_HW`; drift invariant re-checked clean.
+
+**Verified:** `tb_ncc_scales`, `tb_ncc_only`, `tb_image_ip_axilite`,
+`tb_ball_demo`, `tb_kcf_top` all pass, from the IP tree *and* from the vendored
+monorepo copy. (`tb_watch_demo`, `tb_frame_input_jpeg`, `tb_jpeg_fallback` fail
+identically before and after — they need gitignored generated vectors.)
+
+### 11d. First thing to do on the new bitstream
+
+Read **0x3C**. Expect ~259992. If it reads 0 the fix did not take and there is
+no point looking at THRESH, the bank, or the camera. Only then re-measure
+THRESH against the background ceiling (§0a: model floor 8, hardware ≤8).
+
+### 11e. Lesson
+
+**A `$readmemh` array that is not inferred as a memory is a simulation-only
+constant.** Anything the bitstream must know either goes through a registered
+read port or is a parameter — never a combinationally-read 1-deep array. And
+when a value cancels out of every comparison, losing it produces *no* symptom
+except the one number it divides: rank suspects by what each term uniquely
+touches, not by what looks most complicated.
