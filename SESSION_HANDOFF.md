@@ -5,6 +5,45 @@
 
 ---
 
+## 0a. NEWEST (2026-07-28) — NCC rebuilt for the final-demo target
+
+- The demo target changed to a **white/red toy jet on black cloth** (11 photos in
+  `Target photos for final demo/`). The shipped bank was cut by
+  `build_target_figure.py`, which segments on colour **saturation** — on a mostly
+  white jet that selects only the red trim (a 43×127 px sliver on one photo), so
+  the template came from the wrong region.
+- **New `scripts/build_target_demo.py`** (IP repo, committed `338f531`;
+  vendored `aee3b4b` monorepo / `382657a` custom_soc_HW). **No RTL, no AXI
+  change** — `.mem` files only. All five NCC/KCF testbenches pass.
+- Measured over 924 rendered frames (11 photos × 7 sizes × 4 rotations × 3
+  positions) and **150 target-free cloth frames validated against the
+  segmentation mask** so none clips the object, each bank at the lowest THRESH
+  its own worst target-free case allows:
+
+  | | shipped | new |
+  |---|---|---|
+  | THRESH | 25 | 18 |
+  | lock within ±32 px | 76.6 % | 84.0 % |
+  | hand-held envelope (48–84 px) | 81.5 % | 87.2 % |
+  | worst target-free confidence | 9 | 8 |
+  | target wins when a distractor shares the frame | 82 % | 91 % |
+
+- **THRESH (0x08) is currently 30 in firmware; the model says that costs ~13
+  points of acquisition versus 18.** Do NOT set it from the model
+  (`kcf_ip.h` explains why — the model runs ~25 points high on target
+  confidence). What *does* transfer is the background ceiling: the model's worst
+  target-free frame is **8**, and the 2026-07-27 hardware capture independently
+  measured **≤ 8**. So ≥ ~16–18 keeps a 2× margin over measured background.
+  **Re-measure once on hardware with the new bank, then set it.**
+- **Two defects found and fixed on the way** (§10).
+- **Known limits, state them rather than be surprised:** one of the 11 photos
+  (`target9 (1)`, backdrop luma 72 vs jet 95) is near-zero contrast and is
+  essentially unusable — don't demo in that lighting. And a bare bright object
+  with no target present WILL acquire (disc 57 %); r² is contrast-invariant so
+  this is inherent, not a bug. Keep hands and pale objects out of frame.
+
+---
+
 ## 0. TL;DR — where things stand
 
 - **Hardware JPEG frame input** is built, verified in sim, and on all repos: the
@@ -591,3 +630,59 @@ log allows.
 Assistant memory files with the same facts:
 `kcf-confidence-and-idct-timing.md`, `hw-tracking-debug.md`,
 `ncc-target-training.md`, `jpeg-revendor-and-icd-gap.md`, `fft-timing-fix.md`.
+
+---
+
+## 10. NCC rebuild for the final-demo jet (2026-07-28)
+
+### 10a. Two defects found
+
+1. **The packed bank could overflow 9-bit signed.** `build_bank` rescaled once
+   so the peak fit, but `force_zero_mean` nudges individual entries *after* the
+   rescale and can push one back to +256 — which wraps to −256 in the 9-bit
+   field and silently destroys the `Σ(t) == 0` identity that makes confidence a
+   true percentage. `tb_tmpl_bank.mem` was shipping a member decoding to
+   −256..43 with **sum −512**, and *both* ball testbenches still passed because
+   the other two members carried the match. Now iterated to fit and asserted
+   (range **and** zero sum) before writing.
+
+2. **`tb_ncc_scales` was specified against a threshold nothing runs.** It set
+   `THRESH_PCT = 60` while firmware ran 25 (now 30), so its "a bright distractor
+   must not acquire" check never tested the shipped operating point — the
+   shipped bank scores **49** on that scene, far above 25. The check passed for
+   years while the property it claimed was false.
+   Normalized correlation is **contrast-invariant**, so a bare bright disc
+   scores like a target at *any* usable threshold; no threshold can reject it.
+   The property that actually protects a demo is that a real target *out-ranks*
+   it. The testbench now runs at the shipped THRESH, ranks the distractor
+   against a real target, and adds `scale_both.mem` (target + disc in one frame)
+   which must lock the **target**.
+
+### 10b. What was rejected, and why — each measured, not assumed
+
+| tried | result |
+|---|---|
+| lower `EF_ZM_MIN` (20k…150k) | looked like +8 points until the controls were validated — the first negative set **accidentally clipped the object**, so cloth scored 0. With real cloth a lower gate admits fold texture and forces THRESH up further than it gains. **Stays 150000.** |
+| Tikhonov divisor `(ef_zm + λ)` instead of the hard gate | +0.5 points. Not worth an RTL change. |
+| 4, 5, 6 bank members | +0.4 points for double the multipliers. |
+| relative-brightness gate (window mean − frame mean) | targets p5 = 3, cloth p95 = 15. No separation — the object is too small a fraction of a 16×16 window to lift its mean. |
+| clutter-whitened template (`target − α·blob`) | disc 31 → 27 while costing accuracy and negative margin. |
+| fully rotation-averaged profile | +1.7 points accuracy, but the disc distractor rises to **76 %**, which would let a hand acquire. Rejected on that. |
+
+The accuracy ceiling is set by the contrast gate refusing dim/small targets, and
+that is a genuine information limit here, not a tuning miss: cloth folds and a
+dim target overlap in every scalar the hardware computes.
+
+### 10c. Lessons
+
+- **A negative control that clips the target is not a negative control.** Two
+  separate conclusions in this session reversed once the controls were validated
+  against the segmentation mask. Validate the control, not just the experiment.
+- **When a metric is invariant to something, no threshold on it can reject that
+  something.** r² is contrast-invariant, so "reject the bright disc with a
+  threshold" was never achievable — only ranking is.
+- **A testbench constant that does not match what firmware writes tests nothing.**
+  Same class as the Q8.8/percent contract bug in §8d; check the two agree.
+- The model over-predicts *target* confidence by ~25 points (documented in
+  `kcf_ip.h`) but predicts the *background ceiling* exactly (8, matching the
+  hardware capture). Trust it for the floor, not the ceiling.
